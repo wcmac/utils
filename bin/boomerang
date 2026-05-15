@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -e
+
+INPUT="$1"
+if [[ -z "$INPUT" ]]; then
+  echo "Usage: $0 <input.mp4>" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "Error: file not found: $INPUT" >&2
+  exit 1
+fi
+
+BASENAME="${INPUT%.*}"
+EXT="${INPUT##*.}"
+
+# Parse optional time suffix (e.g. "foo 0'30\".mp4" → NAME="foo", TIME=" 0'30\"")
+TIME_SUFFIX=""
+NAME_WITHOUT_TIME="$BASENAME"
+if [[ "$BASENAME" =~ ^(.*[[:space:]])([0-9]+"'"[0-9]+"\"")$ ]]; then
+  NAME_WITHOUT_TIME="${BASH_REMATCH[1]}"
+  NAME_WITHOUT_TIME="${NAME_WITHOUT_TIME%" "}"
+  ORIG_TIME="${BASH_REMATCH[2]}"
+  # Double the duration
+  if [[ "$ORIG_TIME" =~ ^([0-9]+)"'"([0-9]+)\"$ ]]; then
+    MINS=${BASH_REMATCH[1]}
+    SECS=${BASH_REMATCH[2]}
+    NEW_TOTAL=$(( (MINS * 60 + SECS) * 2 ))
+    NEW_MINS=$(( NEW_TOTAL / 60 ))
+    NEW_SECS=$(( NEW_TOTAL % 60 ))
+    TIME_SUFFIX=" ${NEW_MINS}'$(printf '%02d' "$NEW_SECS")\""
+  fi
+fi
+
+OUTPUT="${NAME_WITHOUT_TIME} boomerang${TIME_SUFFIX}.${EXT}"
+
+HAS_AUDIO=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$INPUT")
+
+echo "Creating boomerang: $OUTPUT"
+
+if [[ -n "$HAS_AUDIO" ]]; then
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "[0:v]reverse[rv];[0:a]areverse[ra];[0:v][0:a][rv][ra]concat=n=2:v=1:a=1[v][a]" \
+    -map "[v]" -map "[a]" \
+    -c:v libx264 -crf 18 -preset fast \
+    -c:a aac \
+    "$OUTPUT"
+else
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "[0:v]reverse[rv];[0:v][rv]concat=n=2:v=1:a=0[v]" \
+    -map "[v]" \
+    -c:v libx264 -crf 18 -preset fast \
+    "$OUTPUT"
+fi
+
+echo "Done: $OUTPUT"
