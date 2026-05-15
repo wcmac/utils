@@ -4,7 +4,8 @@ Personal utilities: shell scripts, Python scripts, Chrome extensions, and more.
 
 ## Structure
 
-- `bin/` — executable shell scripts (add to `$PATH`)
+- `bin/` — executable shell scripts
+- `zsh/` — zsh configuration, intended to be sourced from `~/.zshrc`
 - `python/` — Python scripts
 - `chrome-extensions/` — Chrome extension source code
 
@@ -15,7 +16,9 @@ Clone the repo:
 git clone https://github.com/wcmac/utils.git ~/utils
 ```
 
-Add `bin/` to your PATH (in `~/.zshrc` or `~/.bashrc`):
+Source the shared zsh config from `~/.zshrc`:
 ```
-export PATH="$HOME/utils/bin:$PATH"
+source ~/utils/zsh/common.zsh
 ```
+
+This sets up PATH (including `~/utils/bin/`), aliases, prompt, and other shell configuration.
