@@ -1,0 +1,454 @@
+#!/usr/bin/env python3
+"""rsync-sidekick – detect file moves before rsync, and find duplicate files.
+
+SUBCOMMANDS
+  moves   Detect renames/moves since last backup and mv them on the backup
+          disk before running rsync, saving large data transfers.
+
+  dupes   Find duplicate files within a directory tree.
+
+EXAMPLES
+  # Show what moves would be applied (dry run):
+  rsync-sidekick moves ~/Photos /Volumes/Backup/Photos
+
+  # Apply the moves, then run rsync as usual:
+  rsync-sidekick moves --apply ~/Photos /Volumes/Backup/Photos
+  rsync -av ~/Photos/ /Volumes/Backup/Photos/
+
+  # Pass extra rsync options (e.g. excludes):
+  rsync-sidekick moves --apply --rsync-opt='--exclude=.DS_Store' ~/src /Volumes/Backup/src
+
+  # Find duplicate files under a directory:
+  rsync-sidekick dupes /Volumes/Backup/Photos
+
+  # Find duplicates, ignoring files under 1 MB:
+  rsync-sidekick dupes --min-size 1048576 /Volumes/Backup
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+__version__ = '1.0.0'
+
+PARTIAL_BYTES = 64 * 1024   # read this many bytes from each end of a file
+
+
+# ── Fingerprinting ───────────────────────────────────────────────────────────
+
+def partial_fingerprint(path: Path) -> tuple[int, bytes, bytes] | None:
+    """Return (size, head_digest, tail_digest), or None on I/O error.
+
+    Reads at most 2 × PARTIAL_BYTES regardless of file size.  For files
+    that fit within PARTIAL_BYTES the tail digest equals the head digest.
+    Two files with the same partial fingerprint are almost certainly identical.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+
+    if size == 0:
+        z = hashlib.sha256(b'').digest()
+        return (0, z, z)
+
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(PARTIAL_BYTES)
+            h_head = hashlib.sha256(head).digest()
+
+            if size > PARTIAL_BYTES:
+                fh.seek(size - PARTIAL_BYTES)
+                tail = fh.read(PARTIAL_BYTES)
+                h_tail = hashlib.sha256(tail).digest()
+            else:
+                h_tail = h_head
+
+        return (size, h_head, h_tail)
+    except OSError:
+        return None
+
+
+def full_fingerprint(path: Path) -> bytes | None:
+    """Return SHA-256 of the entire file, or None on I/O error."""
+    h = hashlib.sha256()
+    try:
+        with open(path, 'rb') as fh:
+            while chunk := fh.read(1 << 20):   # 1 MiB at a time
+                h.update(chunk)
+        return h.digest()
+    except OSError:
+        return None
+
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+
+def fmt_size(n: float) -> str:
+    """Human-readable byte count."""
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if n < 1024 or unit == 'TB':
+            return f'{int(n)} B' if unit == 'B' else f'{n:.1f} {unit}'
+        n /= 1024
+    return str(n)   # unreachable
+
+
+def warn(msg: str) -> None:
+    print(f'warning: {msg}', file=sys.stderr)
+
+
+# ── moves subcommand ─────────────────────────────────────────────────────────
+
+def rsync_dry_run(
+    source: Path,
+    backup: Path,
+    extra_opts: list[str],
+) -> tuple[list[str], list[str]]:
+    """Run rsync in dry-run mode and return (deleted_rel_paths, new_rel_paths).
+
+    deleted = files in backup that rsync would remove
+              (present in backup, absent in source → maybe moved away)
+    new     = files rsync would transfer from scratch
+              (present in source, absent in backup → maybe moved here)
+    """
+    src = str(source).rstrip('/') + '/'
+    dst = str(backup).rstrip('/') + '/'
+
+    cmd = [
+        'rsync', '-a', '--dry-run', '--itemize-changes', '--delete',
+        *extra_opts,
+        src, dst,
+    ]
+    print('[dry-run]', ' '.join(cmd), file=sys.stderr)
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Exit code 24 = some source files vanished mid-run; not fatal for us
+    if result.returncode not in (0, 24):
+        sys.exit(f'rsync exited {result.returncode}:\n{result.stderr.strip()}')
+
+    deleted, new_files = [], []
+    for line in result.stdout.splitlines():
+        # Deletion:  "*deleting   rel/path"
+        if line.startswith('*deleting   '):
+            rel = line[12:]
+            if not rel.endswith('/'):       # skip directory deletions
+                deleted.append(rel)
+
+        # Brand-new file transfer:  ">f+++++++++ rel/path"
+        # All nine attribute chars are '+', meaning no prior version exists.
+        elif (len(line) > 12
+              and line[0] == '>'
+              and line[1] == 'f'
+              and line[2:11] == '+++++++++'):
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                new_files.append(parts[1])
+
+    return deleted, new_files
+
+
+def find_moves(
+    source: Path,
+    backup: Path,
+    deleted_rels: list[str],
+    new_rels: list[str],
+) -> list[tuple[str, str, int]]:
+    """Return [(old_rel, new_rel, size), …] for unambiguous move pairs.
+
+    A move is unambiguous when exactly one file on each side shares a
+    fingerprint.  Ambiguous cases (duplicates on either side) are skipped
+    and left for rsync to handle normally.
+    """
+    # Index deleted files by fingerprint (they live on the backup disk)
+    backup_index: dict[tuple, list[str]] = defaultdict(list)
+    for rel in deleted_rels:
+        fp = partial_fingerprint(backup / rel)
+        if fp and fp[0] > 0:
+            backup_index[fp].append(rel)
+
+    # Index new files by fingerprint (they live on the source)
+    source_index: dict[tuple, list[str]] = defaultdict(list)
+    for rel in new_rels:
+        fp = partial_fingerprint(source / rel)
+        if fp and fp[0] > 0:
+            source_index[fp].append(rel)
+
+    moves = []
+    for fp, b_rels in backup_index.items():
+        s_rels = source_index.get(fp)
+        if not s_rels:
+            continue
+        if len(b_rels) == 1 and len(s_rels) == 1:
+            moves.append((b_rels[0], s_rels[0], fp[0]))   # (old, new, size)
+        # else: ambiguous – multiple files share this fingerprint; skip them
+
+    moves.sort(key=lambda t: t[2], reverse=True)   # largest first
+    return moves
+
+
+def cmd_moves(args: argparse.Namespace) -> None:
+    source = Path(args.source).expanduser().resolve()
+    backup = Path(args.backup).expanduser().resolve()
+
+    for label, p in (('Source', source), ('Backup', backup)):
+        if not p.is_dir():
+            sys.exit(f'{label} is not an accessible directory: {p}')
+
+    deleted_rels, new_rels = rsync_dry_run(source, backup, args.rsync_opt)
+
+    n_del, n_new = len(deleted_rels), len(new_rels)
+    print(
+        f'\nrsync would delete {n_del} file(s) from backup '
+        f'and transfer {n_new} new file(s) to backup.',
+        file=sys.stderr,
+    )
+
+    if not n_del or not n_new:
+        print('No move candidates (need both deletions and additions to detect moves).')
+        return
+
+    print(
+        f'Fingerprinting {n_del + n_new} candidate file(s)…',
+        file=sys.stderr,
+    )
+    moves = find_moves(source, backup, deleted_rels, new_rels)
+
+    if not moves:
+        print('No unambiguous moves detected.')
+        return
+
+    saved = sum(size for _, _, size in moves)
+    n_ambiguous = (n_del + n_new) // 2 - len(moves)   # rough count
+
+    print(
+        f'\nDetected {len(moves)} move(s) — '
+        f'~{fmt_size(saved)} of data transfer saved:\n'
+    )
+    col = max(len(old) for old, _, _ in moves)
+    for old_rel, new_rel, size in moves:
+        print(f'  {fmt_size(size):>10}   {old_rel:<{col}}  →  {new_rel}')
+    print()
+
+    if n_ambiguous > 0:
+        print(f'({n_ambiguous} file(s) skipped — ambiguous fingerprint matches; rsync will handle them.)\n')
+
+    if not args.apply:
+        print('Dry run.  Pass --apply to perform these moves on the backup disk.')
+        print(f'Then run:  rsync -av {source}/ {backup}/')
+        return
+
+    # ── apply moves ──────────────────────────────────────────────────────────
+    errors = 0
+    for old_rel, new_rel, _ in moves:
+        old_path = backup / old_rel
+        new_path = backup / new_rel
+
+        if not old_path.exists():
+            warn(f'source of move no longer exists (skipping): {old_path}')
+            errors += 1
+            continue
+        if new_path.exists():
+            warn(f'destination already exists (skipping): {new_path}')
+            errors += 1
+            continue
+
+        try:
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.rename(new_path)
+            print(f'  moved  {old_rel}  →  {new_rel}')
+        except OSError as exc:
+            warn(f'could not move {old_path}: {exc}')
+            errors += 1
+
+    print()
+    if errors:
+        print(f'{errors} error(s) — see warnings above.', file=sys.stderr)
+        sys.exit(1)
+
+    print(f'{len(moves)} move(s) applied.  Now run:')
+    print(f'  rsync -av {source}/ {backup}/')
+
+
+# ── dupes subcommand ─────────────────────────────────────────────────────────
+
+# macOS system directories that are never worth scanning
+_SKIP_DIRS = {'.Spotlight-V100', '.Trashes', '.fseventsd', '.TemporaryItems', '.DocumentRevisions-V100'}
+
+
+def walk_files(root: Path, min_size: int) -> list[tuple[Path, int]]:
+    """Yield (path, size) for every eligible regular file under root."""
+    results = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Prune hidden and macOS metadata directories in-place
+        dirnames[:] = [
+            d for d in dirnames
+            if not d.startswith('.') and d not in _SKIP_DIRS
+        ]
+        for name in filenames:
+            if name.startswith('.'):
+                continue
+            p = Path(dirpath) / name
+            if p.is_symlink():
+                continue
+            try:
+                size = p.stat().st_size
+                if size >= min_size:
+                    results.append((p, size))
+            except OSError:
+                pass
+    return results
+
+
+def find_duplicates(root: Path, min_size: int) -> list[list[Path]]:
+    """Return groups of ≥2 files with identical content, sorted by size desc."""
+    files = walk_files(root, min_size)
+    print(f'Indexed {len(files):,} file(s).  Checking for duplicates…', file=sys.stderr)
+
+    # Stage 1: group by exact size — files with a unique size can't be dupes
+    by_size: dict[int, list[Path]] = defaultdict(list)
+    for p, size in files:
+        by_size[size].append(p)
+
+    # Stage 2: partial fingerprint within each size-group
+    by_partial: dict[tuple, list[Path]] = defaultdict(list)
+    for size, paths in by_size.items():
+        if len(paths) < 2:
+            continue
+        for p in paths:
+            fp = partial_fingerprint(p)
+            if fp is not None:
+                by_partial[fp].append(p)
+
+    # Stage 3: full hash to confirm — guards against partial-hash collisions
+    # (vanishingly rare, but we're reporting actionable data so correctness matters)
+    groups: list[list[Path]] = []
+    for partial_group in by_partial.values():
+        if len(partial_group) < 2:
+            continue
+        by_full: dict[bytes, list[Path]] = defaultdict(list)
+        for p in partial_group:
+            fh = full_fingerprint(p)
+            if fh is not None:
+                by_full[fh].append(p)
+        for verified in by_full.values():
+            if len(verified) >= 2:
+                groups.append(sorted(verified))
+
+    groups.sort(key=lambda g: g[0].stat().st_size, reverse=True)
+    return groups
+
+
+def cmd_dupes(args: argparse.Namespace) -> None:
+    root = Path(args.directory).expanduser().resolve()
+    if not root.is_dir():
+        sys.exit(f'Not an accessible directory: {root}')
+
+    print(f'Scanning {root} …', file=sys.stderr)
+    groups = find_duplicates(root, args.min_size)
+
+    if not groups:
+        print('No duplicate files found.')
+        return
+
+    total_wasted = sum(
+        g[0].stat().st_size * (len(g) - 1)
+        for g in groups
+    )
+    print(
+        f'\n{len(groups)} duplicate group(s)  '
+        f'({fmt_size(total_wasted)} reclaimable)\n'
+    )
+
+    for i, group in enumerate(groups, 1):
+        size = group[0].stat().st_size
+        wasted = size * (len(group) - 1)
+        print(
+            f'Group {i}:  {len(group)} files × {fmt_size(size)}'
+            f'  ({fmt_size(wasted)} reclaimable)'
+        )
+        for p in group:
+            print(f'  {p}')
+        print()
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='rsync-sidekick',
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+    sub = parser.add_subparsers(dest='subcommand', required=True)
+
+    # ── moves ──
+    p_moves = sub.add_parser(
+        'moves',
+        help='detect file moves/renames and apply them on the backup disk before rsync',
+        description=(
+            'Runs rsync --dry-run to identify files that have been moved or renamed\n'
+            'in source since the last backup, then (with --apply) renames them on\n'
+            'the backup disk so rsync can skip their content entirely.\n\n'
+            'Always run without --apply first to review the proposed moves.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_moves.add_argument('source', help='rsync source directory')
+    p_moves.add_argument('backup', help='rsync destination / backup directory')
+    p_moves.add_argument(
+        '--apply',
+        action='store_true',
+        help='execute the detected moves on the backup disk (default: dry run)',
+    )
+    p_moves.add_argument(
+        '--rsync-opt',
+        metavar='OPT',
+        action='append',
+        default=[],
+        help=(
+            'extra option forwarded to the rsync dry-run '
+            '(repeatable; e.g. --rsync-opt="--exclude=.DS_Store")'
+        ),
+    )
+
+    # ── dupes ──
+    p_dupes = sub.add_parser(
+        'dupes',
+        help='find duplicate files within a directory tree',
+        description=(
+            'Walks a directory tree and reports clusters of files with identical\n'
+            'content, sorted largest-first.  Uses a fast partial-hash pre-filter\n'
+            'followed by full SHA-256 verification.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_dupes.add_argument('directory', help='root directory to scan')
+    p_dupes.add_argument(
+        '--min-size',
+        metavar='BYTES',
+        type=int,
+        default=1,
+        help='ignore files smaller than BYTES (default: 1)',
+    )
+
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.subcommand == 'moves':
+        cmd_moves(args)
+    elif args.subcommand == 'dupes':
+        cmd_dupes(args)
+
+
+if __name__ == '__main__':
+    main()
