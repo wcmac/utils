@@ -77,7 +77,7 @@ while IFS= read -r -d $'\0' FILE; do
       do_move "$FILE" "$ORIG_FILE"
       COUNT_CONVERTED=$(( COUNT_CONVERTED + 1 ))
     else
-      if ffmpeg -y -loglevel error -i "$FILE" \
+      if ffmpeg -nostdin -y -loglevel error -i "$FILE" \
           -c:v libx264 -crf 18 -preset fast -c:a aac "$MP4"; then
         do_mkdir "$PARENT/orig"
         do_move "$FILE" "$ORIG_FILE"
