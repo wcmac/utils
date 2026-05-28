@@ -150,11 +150,11 @@ TOTAL=$(( COUNT_ALREADY_DONE + COUNT_MOVED_FROM_CONVERTED + COUNT_REMUXED + COUN
 
 echo ""
 echo "Summary (${DRY_RUN:+dry run, }$TOTAL files):"
-echo "  Already converted (mp4 alongside):   $COUNT_ALREADY_DONE"
-echo "  Moved from converted/ subdir:        $COUNT_MOVED_FROM_CONVERTED"
-echo "  Remuxed (m4v → mp4):                $COUNT_REMUXED"
-echo "  Newly converted:                     $COUNT_CONVERTED"
-echo "  Skipped (already in orig/):          $COUNT_SKIPPED"
+printf "  %-37s %4d\n" "Already converted (mp4 alongside):" "$COUNT_ALREADY_DONE"
+printf "  %-37s %4d\n" "Moved from converted/ subdir:" "$COUNT_MOVED_FROM_CONVERTED"
+printf "  %-37s %4d\n" "Remuxed (m4v -> mp4):" "$COUNT_REMUXED"
+printf "  %-37s %4d\n" "Newly converted:" "$COUNT_CONVERTED"
+printf "  %-37s %4d\n" "Skipped (already in orig/):" "$COUNT_SKIPPED"
 if [[ $COUNT_ERRORS -gt 0 ]]; then
-echo "  Errors:                              $COUNT_ERRORS"
+  printf "  %-37s %4d\n" "Errors:" "$COUNT_ERRORS"
 fi
