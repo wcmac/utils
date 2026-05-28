@@ -50,6 +50,7 @@ while IFS= read -r -d $'\0' FILE; do
   FILENAME="$(basename "$FILE")"
   BASE="${FILENAME%.*}"
   MP4="$PARENT/$BASE.mp4"
+  MP4_TMP="$PARENT/$BASE.tmp.mp4"
   M4V="$PARENT/$BASE.m4v"
   CONVERTED_MP4="$PARENT/converted/$BASE.mp4"
   ORIG_FILE="$PARENT/orig/$FILENAME"
@@ -79,11 +80,13 @@ while IFS= read -r -d $'\0' FILE; do
       do_move "$FILE" "$ORIG_FILE"
       COUNT_REMUXED=$(( COUNT_REMUXED + 1 ))
     else
-      if ffmpeg -nostdin -y -loglevel error -i "$FILE" -c copy "$MP4"; then
+      if ffmpeg -nostdin -y -loglevel error -i "$FILE" -c copy "$MP4_TMP"; then
+        mv "$MP4_TMP" "$MP4"
         do_mkdir "$PARENT/orig"
         do_move "$FILE" "$ORIG_FILE"
         COUNT_REMUXED=$(( COUNT_REMUXED + 1 ))
       else
+        rm -f "$MP4_TMP"
         echo "  ERROR: remux failed for $FILE"
         COUNT_ERRORS=$(( COUNT_ERRORS + 1 ))
       fi
@@ -99,12 +102,14 @@ while IFS= read -r -d $'\0' FILE; do
       do_move "$FILE" "$ORIG_FILE"
       COUNT_REMUXED=$(( COUNT_REMUXED + 1 ))
     else
-      if ffmpeg -nostdin -y -loglevel error -i "$M4V" -c copy "$MP4"; then
+      if ffmpeg -nostdin -y -loglevel error -i "$M4V" -c copy "$MP4_TMP"; then
+        mv "$MP4_TMP" "$MP4"
         do_mkdir "$PARENT/orig"
         do_move "$M4V" "$ORIG_M4V"
         do_move "$FILE" "$ORIG_FILE"
         COUNT_REMUXED=$(( COUNT_REMUXED + 1 ))
       else
+        rm -f "$MP4_TMP"
         echo "  ERROR: remux failed for $M4V"
         COUNT_ERRORS=$(( COUNT_ERRORS + 1 ))
       fi
@@ -126,11 +131,13 @@ while IFS= read -r -d $'\0' FILE; do
       COUNT_CONVERTED=$(( COUNT_CONVERTED + 1 ))
     else
       if ffmpeg -nostdin -y -loglevel error -i "$FILE" \
-          -c:v libx264 -crf 18 -preset fast -c:a aac "$MP4"; then
+          -c:v libx264 -crf 18 -preset fast -c:a aac "$MP4_TMP"; then
+        mv "$MP4_TMP" "$MP4"
         do_mkdir "$PARENT/orig"
         do_move "$FILE" "$ORIG_FILE"
         COUNT_CONVERTED=$(( COUNT_CONVERTED + 1 ))
       else
+        rm -f "$MP4_TMP"
         echo "  ERROR: conversion failed for $FILE"
         COUNT_ERRORS=$(( COUNT_ERRORS + 1 ))
       fi
