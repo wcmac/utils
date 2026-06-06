@@ -150,7 +150,8 @@ done < <(find "$DIR" -type f \
   \( -iname "*.mpg" -o -iname "*.mpeg" -o -iname "*.avi" -o -iname "*.mov" \
      -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.flv" -o -iname "*.m4v" \
      -o -iname "*.3gp" -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
-     -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \) \
+     -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
+     -o -iname "*.rm"  -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
   -print0 | sort -z)
 
 TOTAL=$(( COUNT_ALREADY_DONE + COUNT_MOVED_FROM_CONVERTED + COUNT_REMUXED + COUNT_CONVERTED + COUNT_SKIPPED + COUNT_ERRORS ))
