@@ -3,6 +3,8 @@
   // To add a domain: echo -n 'example.com' | shasum -a 256
   const ALLOWED_HASHES = new Set([
     '91dcc18fc7d646eb1537a364d7f7991e1254c63d9d3ccb75b1c388cd528526b2',
+    '12ca17b49af2289436f303e0166030a21e525d266e209267433801a8fd4071a0',
+    '49960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d9763',
   ]);
 
   try {
