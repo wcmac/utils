@@ -2,14 +2,15 @@ const grid = document.getElementById("grid");
 const searchInput = document.getElementById("search");
 const countEl = document.getElementById("count");
 const loadMoreBtn = document.getElementById("load-more");
-const lightbox = document.getElementById("lightbox");
-const lightboxImg = document.getElementById("lightbox-img");
-const lightboxClose = document.getElementById("lightbox-close");
+const detailEmpty = document.getElementById("detail-empty");
+const detailContent = document.getElementById("detail-content");
+const detailImg = document.getElementById("detail-img");
 
 const PAGE_SIZE = 60;
 let debounceTimer = null;
 let loadedCount = 0;
 let totalCount = 0;
+let selectedCell = null;
 
 function runSearch() {
   loadedCount = 0;
@@ -45,16 +46,20 @@ function appendGrid(items) {
     img.loading = "lazy";
     img.alt = item.positive_prompt || "";
     cell.appendChild(img);
-    cell.addEventListener("click", () => openLightbox(item.id));
+    cell.addEventListener("click", () => selectImage(item.id, cell));
     grid.appendChild(cell);
   }
 }
 
-function openLightbox(id) {
+function selectImage(id, cell) {
+  if (selectedCell) selectedCell.classList.remove("selected");
+  selectedCell = cell;
+  cell.classList.add("selected");
+
   fetch(`/api/image/${id}`)
     .then((r) => r.json())
     .then((detail) => {
-      lightboxImg.src = `/full/${id}`;
+      detailImg.src = `/full/${id}`;
       document.getElementById("meta-positive").textContent = detail.positive_prompt || "(none)";
       document.getElementById("meta-negative").textContent = detail.negative_prompt || "(none)";
       const params = [];
@@ -66,13 +71,9 @@ function openLightbox(id) {
       if (detail.width && detail.height) params.push(`Size: ${detail.width}x${detail.height}`);
       document.getElementById("meta-params").textContent = params.join("\n") || "(none)";
       document.getElementById("meta-path").textContent = detail.path;
-      lightbox.classList.remove("hidden");
+      detailEmpty.classList.add("hidden");
+      detailContent.classList.remove("hidden");
     });
-}
-
-function closeLightbox() {
-  lightbox.classList.add("hidden");
-  lightboxImg.src = "";
 }
 
 searchInput.addEventListener("input", () => {
@@ -81,13 +82,5 @@ searchInput.addEventListener("input", () => {
 });
 
 loadMoreBtn.addEventListener("click", fetchPage);
-
-lightboxClose.addEventListener("click", closeLightbox);
-lightbox.addEventListener("click", (e) => {
-  if (e.target === lightbox) closeLightbox();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeLightbox();
-});
 
 runSearch();
