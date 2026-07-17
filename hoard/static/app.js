@@ -6,7 +6,7 @@ const layout = document.getElementById("layout");
 const resizer = document.getElementById("resizer");
 const detailPane = document.getElementById("detail-pane");
 const detailImg = document.getElementById("detail-img");
-const openBtn = document.getElementById("open-btn");
+const detailOpenBtn = document.querySelector("#detail-img-wrap .open-overlay");
 
 const PAGE_SIZE = 60;
 const MIN_PANE_WIDTH = 240;
@@ -42,15 +42,31 @@ function updateCount() {
     : `Showing ${loadedCount.toLocaleString()} of ${totalCount.toLocaleString()} results`;
 }
 
+function openImage(id) {
+  fetch(`/api/open/${id}`, { method: "POST" });
+}
+
 function appendGrid(items) {
   for (const item of items) {
     const cell = document.createElement("div");
     cell.className = "thumb";
+
     const img = document.createElement("img");
     img.src = `/thumb/${item.id}`;
     img.loading = "lazy";
     img.alt = item.positive_prompt || "";
     cell.appendChild(img);
+
+    const openBtn = document.createElement("button");
+    openBtn.className = "open-overlay";
+    openBtn.title = "Open in default app";
+    openBtn.innerHTML = "&#8599;";
+    openBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openImage(item.id);
+    });
+    cell.appendChild(openBtn);
+
     cell.addEventListener("click", () => selectImage(item.id, cell));
     grid.appendChild(cell);
   }
@@ -108,8 +124,8 @@ resizer.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", stopResizerDrag);
 });
 
-openBtn.addEventListener("click", () => {
-  if (selectedId != null) fetch(`/api/open/${selectedId}`, { method: "POST" });
+detailOpenBtn.addEventListener("click", () => {
+  if (selectedId != null) openImage(selectedId);
 });
 
 searchInput.addEventListener("input", () => {
