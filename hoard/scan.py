@@ -22,6 +22,12 @@ def find_images(root: Path):
 
 def extract_parameters_text(path: Path) -> str | None:
     """Read the raw SD parameters blob from a PNG tEXt chunk or JPEG EXIF UserComment."""
+    return _extract_parameters_text_ex(path)[0]
+
+
+def _extract_parameters_text_ex(path: Path) -> tuple[str | None, bool]:
+    """Same as extract_parameters_text, but also reports whether the slow
+    (post-IDAT) fallback path was needed, for perf diagnostics."""
     with Image.open(path) as im:
         if path.suffix.lower() == ".png":
             text = im.info.get("parameters")
@@ -33,22 +39,23 @@ def extract_parameters_text(path: Path) -> str | None:
                 # when the (much more common) fast path finds nothing.
                 im.load()
                 text = im.info.get("parameters")
-            return text
+                return text, True
+            return text, False
 
         exif = im.getexif()
         raw = exif.get(0x9286)  # UserComment
         if not raw:
-            return None
+            return None, False
         if isinstance(raw, bytes):
             # EXIF UserComment is prefixed with an 8-byte character-code header.
             raw = raw[8:] if len(raw) > 8 else raw
             for enc in ("utf-16-be", "utf-16-le", "utf-8", "ascii"):
                 try:
-                    return raw.decode(enc).strip("\x00").strip()
+                    return raw.decode(enc).strip("\x00").strip(), False
                 except (UnicodeDecodeError, UnicodeError):
                     continue
-            return None
-        return str(raw)
+            return None, False
+        return str(raw), False
 
 
 def scan_directory(root: str, rescan: bool = False, progress: bool = True) -> dict:
@@ -59,6 +66,7 @@ def scan_directory(root: str, rescan: bool = False, progress: bool = True) -> di
     skipped = 0
     failed = 0
     empty_prompt = 0
+    slow_fallback = 0
     seen_paths = set()
 
     paths = list(find_images(root_path))
@@ -81,7 +89,9 @@ def scan_directory(root: str, rescan: bool = False, progress: bool = True) -> di
             with Image.open(path) as im:
                 width, height = im.size
 
-            params_text = extract_parameters_text(path)
+            params_text, used_fallback = _extract_parameters_text_ex(path)
+            if used_fallback:
+                slow_fallback += 1
             parsed = parse_parameters(params_text) if params_text else {
                 "positive_prompt": "",
                 "negative_prompt": "",
@@ -134,6 +144,7 @@ def scan_directory(root: str, rescan: bool = False, progress: bool = True) -> di
         "failed": failed,
         "removed": removed,
         "empty_prompt": empty_prompt,
+        "slow_fallback": slow_fallback,
     }
 
 

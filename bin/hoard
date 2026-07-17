@@ -92,6 +92,12 @@ def cmd_scan(args):
             f"a plain photo, or an unrecognized metadata format). Run "
             f"`hoard inspect <file>` on one of them to see what hoard actually found."
         )
+    if stats["slow_fallback"]:
+        print(
+            f"Note: {stats['slow_fallback']} images needed the slow full-decode "
+            f"fallback (their metadata is stored after the image data) — this is "
+            f"the main thing that would make scanning slower than expected."
+        )
 
 
 def cmd_inspect(args):
