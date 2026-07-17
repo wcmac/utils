@@ -22,17 +22,39 @@ let selectedCell = null;
 let selectedId = null;
 let paneVisible = false;
 
+function currentCriteria() {
+  const c = {};
+  for (const [key, input] of Object.entries(searchFields)) {
+    if (input.value) c[key] = input.value;
+  }
+  return c;
+}
+
+function restoreFromUrl() {
+  const params = new URLSearchParams(location.search);
+  for (const [key, input] of Object.entries(searchFields)) {
+    const v = params.get(key);
+    if (v) input.value = v;
+  }
+}
+
+function syncUrl() {
+  const qs = new URLSearchParams(currentCriteria()).toString();
+  const newUrl = qs ? `${location.pathname}?${qs}` : location.pathname;
+  history.replaceState(null, "", newUrl);
+}
+
 function runSearch() {
   loadedCount = 0;
   grid.innerHTML = "";
+  syncUrl();
   fetchPage();
 }
 
 function fetchPage() {
-  const params = new URLSearchParams({ offset: loadedCount, limit: PAGE_SIZE });
-  for (const [key, input] of Object.entries(searchFields)) {
-    if (input.value) params.set(key, input.value);
-  }
+  const params = new URLSearchParams(currentCriteria());
+  params.set("offset", loadedCount);
+  params.set("limit", PAGE_SIZE);
   fetch(`/api/search?${params.toString()}`)
     .then((r) => r.json())
     .then((data) => {
@@ -145,4 +167,5 @@ for (const input of Object.values(searchFields)) {
 
 loadMoreBtn.addEventListener("click", fetchPage);
 
+restoreFromUrl();
 runSearch();
