@@ -1,20 +1,42 @@
 const grid = document.getElementById("grid");
 const searchInput = document.getElementById("search");
+const countEl = document.getElementById("count");
+const loadMoreBtn = document.getElementById("load-more");
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.getElementById("lightbox-close");
 
+const PAGE_SIZE = 60;
 let debounceTimer = null;
+let loadedCount = 0;
+let totalCount = 0;
 
 function runSearch() {
-  const q = searchInput.value;
-  fetch(`/api/search?q=${encodeURIComponent(q)}`)
-    .then((r) => r.json())
-    .then(renderGrid);
+  loadedCount = 0;
+  grid.innerHTML = "";
+  fetchPage();
 }
 
-function renderGrid(items) {
-  grid.innerHTML = "";
+function fetchPage() {
+  const q = searchInput.value;
+  fetch(`/api/search?q=${encodeURIComponent(q)}&offset=${loadedCount}`)
+    .then((r) => r.json())
+    .then((data) => {
+      totalCount = data.total;
+      loadedCount += data.items.length;
+      appendGrid(data.items);
+      updateCount();
+      loadMoreBtn.classList.toggle("hidden", loadedCount >= totalCount);
+    });
+}
+
+function updateCount() {
+  countEl.textContent = totalCount === 0
+    ? "no results"
+    : `${loadedCount} of ${totalCount}`;
+}
+
+function appendGrid(items) {
   for (const item of items) {
     const cell = document.createElement("div");
     cell.className = "thumb";
@@ -57,6 +79,8 @@ searchInput.addEventListener("input", () => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(runSearch, 250);
 });
+
+loadMoreBtn.addEventListener("click", fetchPage);
 
 lightboxClose.addEventListener("click", closeLightbox);
 lightbox.addEventListener("click", (e) => {

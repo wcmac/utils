@@ -130,7 +130,7 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 60, offset: int = 
     fts_query = build_fts_query(query)
     if fts_query is None:
         return conn.execute(
-            "SELECT * FROM images ORDER BY indexed_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM images ORDER BY mtime DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
     return conn.execute(
@@ -138,11 +138,21 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 60, offset: int = 
         SELECT images.* FROM images_fts
         JOIN images ON images.id = images_fts.rowid
         WHERE images_fts MATCH ?
-        ORDER BY images.indexed_at DESC
+        ORDER BY images.mtime DESC
         LIMIT ? OFFSET ?
         """,
         (fts_query, limit, offset),
     ).fetchall()
+
+
+def count_matches(conn: sqlite3.Connection, query: str) -> int:
+    fts_query = build_fts_query(query)
+    if fts_query is None:
+        return conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+    return conn.execute(
+        "SELECT COUNT(*) FROM images_fts WHERE images_fts MATCH ?",
+        (fts_query,),
+    ).fetchone()[0]
 
 
 def get_image(conn: sqlite3.Connection, image_id: int) -> sqlite3.Row | None:

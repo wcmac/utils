@@ -80,8 +80,13 @@ def api_search():
     offset = int(request.args.get("offset", 0))
     conn = db.connect()
     rows = db.search(conn, query, limit=60, offset=offset)
+    total = db.count_matches(conn, query)
     conn.close()
-    return jsonify([_row_to_summary(r) for r in rows])
+    return jsonify({
+        "total": total,
+        "offset": offset,
+        "items": [_row_to_summary(r) for r in rows],
+    })
 
 
 @app.get("/api/image/<int:image_id>")
