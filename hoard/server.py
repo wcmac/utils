@@ -76,7 +76,7 @@ def style_css():
     return send_file(STATIC_DIR / "style.css")
 
 
-DEFAULT_PAGE_SIZE = 1000
+DEFAULT_PAGE_SIZE = 200
 
 
 @app.get("/api/search")

@@ -14,7 +14,7 @@ const detailPane = document.getElementById("detail-pane");
 const detailImg = document.getElementById("detail-img");
 const detailOpenBtn = document.querySelector("#detail-img-wrap .open-overlay");
 
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 200;
 const MIN_PANE_WIDTH = 240;
 let debounceTimer = null;
 let loadedCount = 0;
@@ -63,7 +63,13 @@ function restoreFromUrl() {
 }
 
 function syncUrl() {
-  const qs = new URLSearchParams(currentCriteria()).toString();
+  const params = new URLSearchParams(currentCriteria());
+  // Keep the access token in the URL (if it was there) so a copied/bookmarked/
+  // reopened link still works in a browser context that has no session cookie —
+  // not just in this tab, where the cookie carries auth regardless.
+  const existingToken = new URLSearchParams(location.search).get("token");
+  if (existingToken) params.set("token", existingToken);
+  const qs = params.toString();
   const newUrl = qs ? `${location.pathname}?${qs}` : location.pathname;
   history.replaceState(null, "", newUrl);
 }
