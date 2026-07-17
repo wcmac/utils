@@ -1,5 +1,7 @@
 """Walk a directory tree, extract SD metadata from images, and index into SQLite."""
 
+from __future__ import annotations
+
 import time
 from pathlib import Path
 

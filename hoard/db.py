@@ -1,5 +1,7 @@
 """SQLite storage for hoard: schema, connection, and FTS5 search."""
 
+from __future__ import annotations
+
 import re
 import sqlite3
 from pathlib import Path
