@@ -8,8 +8,25 @@
 <body>
 <header>
   <h1>hoard</h1>
-  <input id="search" type="text" placeholder="foo, bar, baz&hellip;" autocomplete="off" autofocus>
 </header>
+<div id="search-panel">
+  <div class="search-row">
+    <label for="search-prompt">Prompt</label>
+    <input id="search-prompt" type="text" placeholder="foo, bar, baz&hellip;" autocomplete="off" autofocus>
+  </div>
+  <div class="search-row">
+    <label for="search-negative">Negative prompt</label>
+    <input id="search-negative" type="text" placeholder="blurry, watermark&hellip;" autocomplete="off">
+  </div>
+  <div class="search-row">
+    <label for="search-filename">Filename</label>
+    <input id="search-filename" type="text" placeholder="!!, IMG_&hellip;" autocomplete="off">
+  </div>
+  <div class="search-row">
+    <label for="search-aspect">Aspect ratio</label>
+    <input id="search-aspect" type="text" placeholder="portrait, landscape, square, 16x9&hellip;" autocomplete="off">
+  </div>
+</div>
 <div id="count-bar"></div>
 <div id="layout">
   <div id="grid-col">

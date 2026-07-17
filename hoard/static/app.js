@@ -1,5 +1,10 @@
 const grid = document.getElementById("grid");
-const searchInput = document.getElementById("search");
+const searchFields = {
+  prompt: document.getElementById("search-prompt"),
+  negative_prompt: document.getElementById("search-negative"),
+  filename: document.getElementById("search-filename"),
+  aspect: document.getElementById("search-aspect"),
+};
 const countEl = document.getElementById("count-bar");
 const loadMoreBtn = document.getElementById("load-more");
 const layout = document.getElementById("layout");
@@ -8,7 +13,7 @@ const detailPane = document.getElementById("detail-pane");
 const detailImg = document.getElementById("detail-img");
 const detailOpenBtn = document.querySelector("#detail-img-wrap .open-overlay");
 
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 1000;
 const MIN_PANE_WIDTH = 240;
 let debounceTimer = null;
 let loadedCount = 0;
@@ -24,8 +29,11 @@ function runSearch() {
 }
 
 function fetchPage() {
-  const q = searchInput.value;
-  fetch(`/api/search?q=${encodeURIComponent(q)}&offset=${loadedCount}`)
+  const params = new URLSearchParams({ offset: loadedCount, limit: PAGE_SIZE });
+  for (const [key, input] of Object.entries(searchFields)) {
+    if (input.value) params.set(key, input.value);
+  }
+  fetch(`/api/search?${params.toString()}`)
     .then((r) => r.json())
     .then((data) => {
       totalCount = data.total;
@@ -128,10 +136,12 @@ detailOpenBtn.addEventListener("click", () => {
   if (selectedId != null) openImage(selectedId);
 });
 
-searchInput.addEventListener("input", () => {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(runSearch, 250);
-});
+for (const input of Object.values(searchFields)) {
+  input.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(runSearch, 250);
+  });
+}
 
 loadMoreBtn.addEventListener("click", fetchPage);
 

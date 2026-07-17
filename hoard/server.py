@@ -75,13 +75,22 @@ def style_css():
     return send_file(STATIC_DIR / "style.css")
 
 
+DEFAULT_PAGE_SIZE = 1000
+
+
 @app.get("/api/search")
 def api_search():
-    query = request.args.get("q", "")
+    criteria = {
+        "prompt": request.args.get("prompt", ""),
+        "negative_prompt": request.args.get("negative_prompt", ""),
+        "filename": request.args.get("filename", ""),
+        "aspect": request.args.get("aspect", ""),
+    }
     offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", DEFAULT_PAGE_SIZE))
     conn = db.connect()
-    rows = db.search(conn, query, limit=60, offset=offset)
-    total = db.count_matches(conn, query)
+    rows = db.search(conn, criteria, limit=limit, offset=offset)
+    total = db.count_matches(conn, criteria)
     conn.close()
     return jsonify({
         "total": total,

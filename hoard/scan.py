@@ -76,6 +76,7 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
 
             record = {
                 "path": path_str,
+                "filename": path.name,
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "width": width,
