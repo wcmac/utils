@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -23,12 +24,16 @@ def extract_parameters_text(path: Path) -> str | None:
     """Read the raw SD parameters blob from a PNG tEXt chunk or JPEG EXIF UserComment."""
     with Image.open(path) as im:
         if path.suffix.lower() == ".png":
-            # Pillow only parses PNG chunks that appear before the IDAT (image
-            # data) chunk during Image.open() alone. Some tools write the
-            # "parameters" tEXt chunk after IDAT, which Pillow won't surface
-            # in im.info until the file is fully parsed via im.load().
-            im.load()
-            return im.info.get("parameters")
+            text = im.info.get("parameters")
+            if text is None:
+                # Pillow only parses PNG chunks before IDAT during Image.open()
+                # alone. Some tools write "parameters" after IDAT, which only
+                # shows up once the image is fully decoded via im.load() — a
+                # ~10x more expensive call, so only pay for it as a fallback
+                # when the (much more common) fast path finds nothing.
+                im.load()
+                text = im.info.get("parameters")
+            return text
 
         exif = im.getexif()
         raw = exif.get(0x9286)  # UserComment
@@ -46,7 +51,7 @@ def extract_parameters_text(path: Path) -> str | None:
         return str(raw)
 
 
-def scan_directory(root: str, rescan: bool = False) -> dict:
+def scan_directory(root: str, rescan: bool = False, progress: bool = True) -> dict:
     root_path = Path(root).expanduser().resolve()
     conn = db.connect()
 
@@ -56,7 +61,12 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
     empty_prompt = 0
     seen_paths = set()
 
-    for path in find_images(root_path):
+    paths = list(find_images(root_path))
+    total = len(paths)
+    is_tty = sys.stderr.isatty()
+    last_report = 0.0
+
+    for i, path in enumerate(paths, 1):
         path_str = str(path)
         seen_paths.add(path_str)
         stat = path.stat()
@@ -103,6 +113,14 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
                 empty_prompt += 1
         except Exception:
             failed += 1
+
+        if progress and total:
+            now = time.monotonic()
+            if now - last_report >= 0.5 or i == total:
+                last_report = now
+                msg = f"Scanning: {i}/{total} ({indexed} indexed, {skipped} unchanged, {failed} failed)"
+                end = "\n" if (not is_tty or i == total) else ""
+                print(f"\r{msg}" if is_tty else msg, end=end, file=sys.stderr, flush=True)
 
     removed = db.delete_missing_under(conn, str(root_path), seen_paths)
     conn.commit()
