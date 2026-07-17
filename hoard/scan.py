@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 import sys
 import time
 from pathlib import Path
@@ -12,6 +13,38 @@ from hoard import db
 from hoard.parse import parse_parameters
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def list_png_chunks(path: Path) -> list[dict]:
+    """
+    Low-level PNG chunk walk, independent of Pillow's lazy chunk parsing —
+    for diagnosing extraction failures without revealing file content.
+    Returns [{type, length, before_idat, keyword (if a text chunk)}, ...].
+    """
+    chunks = []
+    seen_idat = False
+    with open(path, "rb") as f:
+        if f.read(8) != PNG_SIGNATURE:
+            return chunks
+        while True:
+            header = f.read(8)
+            if len(header) < 8:
+                break
+            length, ctype_raw = struct.unpack(">I4s", header)
+            ctype = ctype_raw.decode("ascii", "replace")
+            data = f.read(length)
+            f.read(4)  # CRC, unused
+            entry = {"type": ctype, "length": length, "before_idat": not seen_idat}
+            if ctype in ("tEXt", "zTXt", "iTXt") and b"\x00" in data:
+                entry["keyword"] = data.split(b"\x00", 1)[0].decode("latin-1", "replace")
+            chunks.append(entry)
+            if ctype == "IDAT":
+                seen_idat = True
+            elif ctype == "IEND":
+                break
+    return chunks
 
 
 def find_images(root: Path):
@@ -31,16 +64,23 @@ def _extract_parameters_text_ex(path: Path) -> tuple[str | None, bool]:
     with Image.open(path) as im:
         if path.suffix.lower() == ".png":
             text = im.info.get("parameters")
-            if text is None:
-                # Pillow only parses PNG chunks before IDAT during Image.open()
-                # alone. Some tools write "parameters" after IDAT, which only
-                # shows up once the image is fully decoded via im.load() — a
-                # ~10x more expensive call, so only pay for it as a fallback
-                # when the (much more common) fast path finds nothing.
-                im.load()
-                text = im.info.get("parameters")
-                return text, True
-            return text, False
+            if text is not None:
+                return text, False
+            # Fast path found nothing. Pillow only parses PNG chunks before
+            # IDAT during Image.open() alone, so some tools' post-IDAT
+            # "parameters" chunk would still be missed here. But before
+            # paying for a full pixel decode via im.load() (~10x slower) to
+            # check, do a cheap structural scan (chunk headers only, no
+            # decompression) — most images with no fast-path match simply
+            # have no "parameters" chunk anywhere, and it'd be wasteful to
+            # fully decode every one of those just to confirm that.
+            has_params_chunk = any(
+                c.get("keyword") == "parameters" for c in list_png_chunks(path)
+            )
+            if not has_params_chunk:
+                return None, False
+            im.load()
+            return im.info.get("parameters"), True
 
         exif = im.getexif()
         raw = exif.get(0x9286)  # UserComment

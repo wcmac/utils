@@ -104,6 +104,11 @@ def cmd_inspect(args):
     path = Path(args.file).expanduser().resolve()
     if not path.exists():
         sys.exit(f"hoard: no such file: {path}")
+
+    if args.redact:
+        cmd_inspect_redacted(path)
+        return
+
     raw = scanlib.extract_parameters_text(path)
     print(f"File: {path}")
     if raw is None:
@@ -117,6 +122,41 @@ def cmd_inspect(args):
     print(f"positive_prompt: {parsed['positive_prompt']!r}")
     print(f"negative_prompt: {parsed['negative_prompt']!r}")
     print(f"params: {parsed['params']}")
+
+
+def cmd_inspect_redacted(path):
+    """Structural diagnostics only — never prints prompt text or pixel content."""
+    import re
+    print(f"File: {path.name}")  # basename only, not the full path
+
+    if path.suffix.lower() == ".png":
+        chunks = scanlib.list_png_chunks(path)
+        print("PNG chunks (file order):")
+        for c in chunks:
+            pos = "before IDAT" if c["before_idat"] else "after IDAT"
+            if "keyword" in c:
+                print(f"  {c['type']:6s} keyword={c['keyword']!r:22s} length={c['length']:>7d}  ({pos})")
+            else:
+                print(f"  {c['type']:6s} length={c['length']:>7d}  ({pos})")
+
+    raw, used_fallback = scanlib._extract_parameters_text_ex(path)
+    print(f"hoard extractor found text under 'parameters': {raw is not None} (used slow post-IDAT fallback: {used_fallback})")
+    if raw is None:
+        return
+
+    print(f"  raw text length: {len(raw)} chars, {raw.count(chr(10)) + 1} lines")
+    print(f"  contains literal 'Negative prompt:': {'Negative prompt:' in raw}")
+    last_line = raw.strip().split("\n")[-1]
+    steps_match = bool(re.search(r"Steps:\s*\d", last_line))
+    print(f"  last line matches Steps pattern: {steps_match}")
+
+    from hoard.parse import parse_parameters
+    parsed = parse_parameters(raw)
+    pos_len = len(parsed["positive_prompt"])
+    neg_len = len(parsed["negative_prompt"])
+    print(f"  parsed positive_prompt: {'EMPTY' if pos_len == 0 else f'non-empty, {pos_len} chars'}")
+    print(f"  parsed negative_prompt: {'EMPTY' if neg_len == 0 else f'non-empty, {neg_len} chars'}")
+    print(f"  parsed param keys found: {sorted(parsed['params'].keys())}")
 
 
 def cmd_serve(args):
@@ -150,6 +190,10 @@ def main():
 
     p_inspect = sub.add_parser("inspect", help="show what hoard extracted from one specific file")
     p_inspect.add_argument("file", help="path to a single image file")
+    p_inspect.add_argument(
+        "--redact", action="store_true",
+        help="structural diagnostics only (chunk types, lengths, booleans) — never prints prompt text",
+    )
     p_inspect.set_defaults(func=cmd_inspect)
 
     args = parser.parse_args()
