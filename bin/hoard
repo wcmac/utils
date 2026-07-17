@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+hoard — browse and search a Stable Diffusion image collection by prompt keywords.
+
+On first run, transparently creates a private venv and installs its
+dependencies (see hoard/requirements.txt) — no manual pip install needed.
+"""
+
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REQUIREMENTS = REPO_ROOT / "hoard" / "requirements.txt"
+VENV_DIR = Path.home() / ".local" / "share" / "hoard" / "venv"
+VENV_PYTHON = VENV_DIR / "bin" / "python3"
+REQUIREMENTS_HASH_FILE = VENV_DIR / ".requirements.sha256"
+
+
+def _requirements_hash() -> str:
+    return hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+
+
+def _venv_is_current() -> bool:
+    return (
+        VENV_PYTHON.exists()
+        and REQUIREMENTS_HASH_FILE.exists()
+        and REQUIREMENTS_HASH_FILE.read_text().strip() == _requirements_hash()
+    )
+
+
+def _ensure_venv() -> None:
+    if _venv_is_current():
+        return
+    print("hoard: setting up its Python environment (first run only)...", file=sys.stderr)
+    VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
+    VENV_DIR.chmod(0o700)
+    subprocess.run(
+        [str(VENV_PYTHON), "-m", "pip", "install", "--quiet", "-r", str(REQUIREMENTS)],
+        check=True,
+    )
+    REQUIREMENTS_HASH_FILE.write_text(_requirements_hash())
+
+
+def _relaunch_in_venv_if_needed() -> None:
+    _ensure_venv()
+    if Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(Path(__file__).resolve())] + sys.argv[1:])
+
+
+_relaunch_in_venv_if_needed()
+
+import argparse
+import webbrowser
+from threading import Timer
+
+sys.path.insert(0, str(REPO_ROOT))
+
+from hoard import scan as scanlib
+from hoard import server as serverlib
+
+
+def cmd_scan(args):
+    stats = scanlib.scan_directory(args.dir, rescan=args.rescan)
+    print(
+        f"Indexed {stats['indexed']}, skipped {stats['skipped']} unchanged, "
+        f"{stats['failed']} failed, {stats['removed']} removed."
+    )
+
+
+def cmd_serve(args):
+    if args.dir:
+        cmd_scan(argparse.Namespace(dir=args.dir, rescan=False))
+
+    url = f"http://127.0.0.1:{args.port}"
+    if not args.no_browser:
+        Timer(0.7, lambda: webbrowser.open(url)).start()
+    print(f"Serving hoard at {url}")
+    serverlib.run(port=args.port)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="hoard", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_scan = sub.add_parser("scan", help="index (or re-index) a directory tree")
+    p_scan.add_argument("dir", help="directory to scan")
+    p_scan.add_argument("--rescan", action="store_true", help="re-parse all files, ignoring cached mtime/size")
+    p_scan.set_defaults(func=cmd_scan)
+
+    p_serve = sub.add_parser("serve", help="start the local web browser/search UI")
+    p_serve.add_argument("dir", nargs="?", help="optionally scan this directory before serving")
+    p_serve.add_argument("--port", type=int, default=8420)
+    p_serve.add_argument("--no-browser", action="store_true", help="don't auto-open a browser tab")
+    p_serve.set_defaults(func=cmd_serve)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

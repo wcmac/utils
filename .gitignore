@@ -1,7 +1,12 @@
 .DS_Store
+trove/features.json
 __pycache__/
 *.pyc
 *.pyo
 .env
 *.swp
 .claude/settings.local.json
+
+# hoard data must never live in-repo (personal SD prompt content)
+hoard/*.db
+hoard-data/

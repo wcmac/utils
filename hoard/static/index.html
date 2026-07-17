@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hoard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>hoard</h1>
+  <input id="search" type="text" placeholder="foo, bar, baz&hellip;" autocomplete="off" autofocus>
+</header>
+<main id="grid"></main>
+<div id="lightbox" class="hidden">
+  <div id="lightbox-inner">
+    <button id="lightbox-close">&times;</button>
+    <img id="lightbox-img" alt="">
+    <div id="lightbox-meta">
+      <div><strong>Prompt</strong><pre id="meta-positive"></pre></div>
+      <div><strong>Negative prompt</strong><pre id="meta-negative"></pre></div>
+      <div><strong>Params</strong><pre id="meta-params"></pre></div>
+      <div id="meta-path"></div>
+    </div>
+  </div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
