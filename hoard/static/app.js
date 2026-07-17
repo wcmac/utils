@@ -17,6 +17,7 @@ const detailOpenBtn = document.querySelector("#detail-img-wrap .open-overlay");
 const PAGE_SIZE = 200;
 const MIN_PANE_WIDTH = 240;
 let debounceTimer = null;
+let searchGeneration = 0;
 let loadedCount = 0;
 let totalCount = 0;
 let selectedCell = null;
@@ -75,6 +76,7 @@ function syncUrl() {
 }
 
 function runSearch() {
+  searchGeneration++;
   loadedCount = 0;
   grid.innerHTML = "";
   syncUrl();
@@ -82,12 +84,17 @@ function runSearch() {
 }
 
 function fetchPage() {
+  const myGeneration = searchGeneration;
   const params = new URLSearchParams(currentCriteria());
   params.set("offset", loadedCount);
   params.set("limit", PAGE_SIZE);
   fetch(`/api/search?${params.toString()}`)
     .then((r) => r.json())
     .then((data) => {
+      // A newer search may have started (and reset grid/loadedCount) while
+      // this request was in flight — a stale response arriving late would
+      // otherwise double-append on top of the current results.
+      if (myGeneration !== searchGeneration) return;
       totalCount = data.total;
       loadedCount += data.items.length;
       appendGrid(data.items);
