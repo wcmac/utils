@@ -110,6 +110,7 @@ function appendGrid(items) {
   for (const item of items) {
     const cell = document.createElement("div");
     cell.className = "thumb";
+    cell.dataset.id = item.id;
 
     const img = document.createElement("img");
     img.src = `/thumb/${item.id}`;
@@ -187,6 +188,44 @@ resizer.addEventListener("mousedown", (e) => {
 
 detailOpenBtn.addEventListener("click", () => {
   if (selectedId != null) openImage(selectedId);
+});
+
+function gridColumnCount() {
+  const cells = Array.from(grid.children);
+  if (cells.length < 2) return 1;
+  const firstTop = cells[0].offsetTop;
+  let count = 1;
+  for (let i = 1; i < cells.length; i++) {
+    if (cells[i].offsetTop !== firstTop) break;
+    count++;
+  }
+  return count;
+}
+
+const ARROW_STEP = {
+  ArrowLeft: () => -1,
+  ArrowRight: () => 1,
+  ArrowUp: () => -gridColumnCount(),
+  ArrowDown: () => gridColumnCount(),
+};
+
+document.addEventListener("keydown", (e) => {
+  if (!selectedCell) return;
+  const stepFn = ARROW_STEP[e.key];
+  if (!stepFn) return;
+  const activeTag = document.activeElement && document.activeElement.tagName;
+  if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
+
+  const cells = Array.from(grid.children);
+  const currentIndex = cells.indexOf(selectedCell);
+  if (currentIndex === -1) return;
+  const nextIndex = currentIndex + stepFn();
+  if (nextIndex < 0 || nextIndex >= cells.length) return;
+
+  e.preventDefault();
+  const nextCell = cells[nextIndex];
+  selectImage(parseInt(nextCell.dataset.id, 10), nextCell);
+  nextCell.scrollIntoView({ block: "nearest" });
 });
 
 function debouncedSearch() {
