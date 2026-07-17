@@ -22,9 +22,17 @@
     <label for="search-filename">Filename</label>
     <input id="search-filename" type="text" placeholder="!!, IMG_&hellip;" autocomplete="off">
   </div>
-  <div class="search-row">
-    <label for="search-aspect">Aspect ratio</label>
-    <input id="search-aspect" type="text" placeholder="portrait, landscape, square, 16x9&hellip;" autocomplete="off">
+  <div class="search-row" id="aspect-row">
+    <label>Aspect ratio</label>
+    <div class="checkbox-group">
+      <label class="checkbox-label"><input type="checkbox" value="portrait"> Portrait</label>
+      <label class="checkbox-label"><input type="checkbox" value="landscape"> Landscape</label>
+      <label class="checkbox-label"><input type="checkbox" value="square"> Square</label>
+      <label class="checkbox-label"><input type="checkbox" value="8x5"> 8x5</label>
+      <label class="checkbox-label"><input type="checkbox" value="2x3"> 2x3</label>
+      <label class="checkbox-label"><input type="checkbox" value="3x2"> 3x2</label>
+      <input id="search-aspect-custom" type="text" placeholder="other, e.g. 21x9&hellip;" autocomplete="off">
+    </div>
   </div>
 </div>
 <div id="count-bar"></div>
@@ -39,6 +47,7 @@
       <img id="detail-img" alt="">
       <button class="open-overlay" title="Open in default app">&#8599;</button>
     </div>
+    <div id="meta-filename"></div>
     <div><strong>Prompt</strong><pre id="meta-positive"></pre></div>
     <div><strong>Negative prompt</strong><pre id="meta-negative"></pre></div>
     <div><strong>Params</strong><pre id="meta-params"></pre></div>

@@ -3,8 +3,9 @@ const searchFields = {
   prompt: document.getElementById("search-prompt"),
   negative_prompt: document.getElementById("search-negative"),
   filename: document.getElementById("search-filename"),
-  aspect: document.getElementById("search-aspect"),
 };
+const aspectCheckboxes = Array.from(document.querySelectorAll("#aspect-row input[type=checkbox]"));
+const aspectCustom = document.getElementById("search-aspect-custom");
 const countEl = document.getElementById("count-bar");
 const loadMoreBtn = document.getElementById("load-more");
 const layout = document.getElementById("layout");
@@ -22,11 +23,19 @@ let selectedCell = null;
 let selectedId = null;
 let paneVisible = false;
 
+function getAspectValue() {
+  const vals = aspectCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+  if (aspectCustom.value.trim()) vals.push(aspectCustom.value.trim());
+  return vals.join(", ");
+}
+
 function currentCriteria() {
   const c = {};
   for (const [key, input] of Object.entries(searchFields)) {
     if (input.value) c[key] = input.value;
   }
+  const aspect = getAspectValue();
+  if (aspect) c.aspect = aspect;
   return c;
 }
 
@@ -35,6 +44,21 @@ function restoreFromUrl() {
   for (const [key, input] of Object.entries(searchFields)) {
     const v = params.get(key);
     if (v) input.value = v;
+  }
+  const aspectParam = params.get("aspect");
+  if (aspectParam) {
+    const knownValues = new Set(aspectCheckboxes.map((cb) => cb.value));
+    const leftover = [];
+    for (const raw of aspectParam.split(",")) {
+      const token = raw.trim().toLowerCase();
+      if (!token) continue;
+      if (knownValues.has(token)) {
+        aspectCheckboxes.find((cb) => cb.value === token).checked = true;
+      } else {
+        leftover.push(token);
+      }
+    }
+    if (leftover.length) aspectCustom.value = leftover.join(", ");
   }
 }
 
@@ -121,6 +145,7 @@ function selectImage(id, cell) {
     .then((r) => r.json())
     .then((detail) => {
       detailImg.src = `/full/${id}`;
+      document.getElementById("meta-filename").textContent = detail.filename || "";
       document.getElementById("meta-positive").textContent = detail.positive_prompt || "(none)";
       document.getElementById("meta-negative").textContent = detail.negative_prompt || "(none)";
       const params = [];
@@ -158,12 +183,18 @@ detailOpenBtn.addEventListener("click", () => {
   if (selectedId != null) openImage(selectedId);
 });
 
-for (const input of Object.values(searchFields)) {
-  input.addEventListener("input", () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(runSearch, 250);
-  });
+function debouncedSearch() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(runSearch, 250);
 }
+
+for (const input of Object.values(searchFields)) {
+  input.addEventListener("input", debouncedSearch);
+}
+for (const cb of aspectCheckboxes) {
+  cb.addEventListener("change", runSearch);
+}
+aspectCustom.addEventListener("input", debouncedSearch);
 
 loadMoreBtn.addEventListener("click", fetchPage);
 

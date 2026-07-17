@@ -20,7 +20,7 @@ from hoard.thumbs import ensure_thumb
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-ACCESS_TOKEN = secrets.token_urlsafe(24)
+ACCESS_TOKEN = secrets.token_hex(24)  # hex only — no hyphens/underscores to trip up copy-paste
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = secrets.token_bytes(32)
@@ -48,6 +48,7 @@ def _row_to_summary(row) -> dict:
 def _row_to_detail(row) -> dict:
     d = _row_to_summary(row)
     d.update({
+        "filename": row["filename"],
         "width": row["width"],
         "height": row["height"],
         "model": row["model"],
