@@ -23,6 +23,11 @@ def extract_parameters_text(path: Path) -> str | None:
     """Read the raw SD parameters blob from a PNG tEXt chunk or JPEG EXIF UserComment."""
     with Image.open(path) as im:
         if path.suffix.lower() == ".png":
+            # Pillow only parses PNG chunks that appear before the IDAT (image
+            # data) chunk during Image.open() alone. Some tools write the
+            # "parameters" tEXt chunk after IDAT, which Pillow won't surface
+            # in im.info until the file is fully parsed via im.load().
+            im.load()
             return im.info.get("parameters")
 
         exif = im.getexif()
