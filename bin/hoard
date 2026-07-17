@@ -144,11 +144,29 @@ def cmd_inspect_redacted(path):
     if raw is None:
         return
 
-    print(f"  raw text length: {len(raw)} chars, {raw.count(chr(10)) + 1} lines")
-    print(f"  contains literal 'Negative prompt:': {'Negative prompt:' in raw}")
-    last_line = raw.strip().split("\n")[-1]
-    steps_match = bool(re.search(r"Steps:\s*\d", last_line))
-    print(f"  last line matches Steps pattern: {steps_match}")
+    def char_desc(ch):
+        if ch is None:
+            return "<start of string>"
+        names = {"\n": "LF (\\n)", "\r": "CR (\\r)", "\t": "TAB", ",": "COMMA", " ": "SPACE"}
+        if ch in names:
+            return names[ch]
+        return repr(ch) if ch.isprintable() else f"U+{ord(ch):04X}"
+
+    print(f"  raw text length: {len(raw)} chars")
+    print(f"  control char counts: LF={raw.count(chr(10))} CR={raw.count(chr(13))} TAB={raw.count(chr(9))}")
+
+    idx = raw.find("Negative prompt:")
+    if idx == -1:
+        print("  'Negative prompt:' not found in raw text")
+    else:
+        print(f"  'Negative prompt:' found at offset {idx}, preceded by: {char_desc(raw[idx-1] if idx > 0 else None)}")
+
+    steps_match = re.search(r"Steps:\s*\d", raw)
+    if steps_match is None:
+        print("  'Steps:' pattern not found anywhere in raw text")
+    else:
+        idx = steps_match.start()
+        print(f"  'Steps:' pattern found at offset {idx}, preceded by: {char_desc(raw[idx-1] if idx > 0 else None)}")
 
     from hoard.parse import parse_parameters
     parsed = parse_parameters(raw)
