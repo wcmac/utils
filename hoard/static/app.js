@@ -1,6 +1,6 @@
 const grid = document.getElementById("grid");
 const searchInput = document.getElementById("search");
-const countEl = document.getElementById("count");
+const countEl = document.getElementById("count-bar");
 const loadMoreBtn = document.getElementById("load-more");
 const detailEmpty = document.getElementById("detail-empty");
 const detailContent = document.getElementById("detail-content");
@@ -33,8 +33,8 @@ function fetchPage() {
 
 function updateCount() {
   countEl.textContent = totalCount === 0
-    ? "no results"
-    : `${loadedCount} of ${totalCount}`;
+    ? "No results"
+    : `Showing ${loadedCount.toLocaleString()} of ${totalCount.toLocaleString()} results`;
 }
 
 function appendGrid(items) {
