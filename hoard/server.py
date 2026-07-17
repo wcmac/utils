@@ -1,15 +1,38 @@
-"""Local web server for browsing/searching the hoard index. Binds to localhost only."""
+"""
+Local web server for browsing/searching the hoard index. Binds to localhost
+only — but on macOS, loopback sockets are shared across every locally
+logged-in account, not just the one that started the server. If another
+account is logged in at the same time (e.g. via `su` or Fast User
+Switching), its processes can otherwise reach this server's port with
+nothing more than a guess. ACCESS_TOKEN closes that gap: it's required once
+via the URL, then carried automatically by a signed session cookie for the
+rest of the browser session.
+"""
 
+import secrets
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, abort
+from flask import Flask, jsonify, request, send_file, abort, session
 
 from hoard import db
 from hoard.thumbs import ensure_thumb
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+ACCESS_TOKEN = secrets.token_urlsafe(24)
+
 app = Flask(__name__, static_folder=None)
+app.secret_key = secrets.token_bytes(32)
+
+
+@app.before_request
+def _require_token():
+    if session.get("authed"):
+        return
+    if request.args.get("token") == ACCESS_TOKEN:
+        session["authed"] = True
+        return
+    abort(403)
 
 
 def _row_to_summary(row) -> dict:

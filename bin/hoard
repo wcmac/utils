@@ -90,7 +90,7 @@ def cmd_serve(args):
     if args.dir:
         cmd_scan(argparse.Namespace(dir=args.dir, rescan=False))
 
-    url = f"http://127.0.0.1:{args.port}"
+    url = f"http://127.0.0.1:{args.port}/?token={serverlib.ACCESS_TOKEN}"
     if not args.no_browser:
         Timer(0.7, lambda: webbrowser.open(url)).start()
     print(f"Serving hoard at {url}")
