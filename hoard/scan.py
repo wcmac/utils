@@ -100,6 +100,8 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
     conn.commit()
     conn.close()
 
+    db.set_last_scanned_dir(str(root_path))
+
     return {"indexed": indexed, "skipped": skipped, "failed": failed, "removed": removed}
 
 

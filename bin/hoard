@@ -74,6 +74,7 @@ from threading import Timer
 site.addsitedir(str(_venv_site_packages()))
 sys.path.insert(0, str(REPO_ROOT))
 
+from hoard import db as dblib
 from hoard import scan as scanlib
 from hoard import server as serverlib
 
@@ -87,8 +88,11 @@ def cmd_scan(args):
 
 
 def cmd_serve(args):
-    if args.dir:
-        cmd_scan(argparse.Namespace(dir=args.dir, rescan=False))
+    scan_dir = args.dir or dblib.get_last_scanned_dir()
+    if scan_dir:
+        cmd_scan(argparse.Namespace(dir=scan_dir, rescan=False))
+    else:
+        print("hoard: no directory given and nothing scanned yet — pass one: hoard serve <dir>", file=sys.stderr)
 
     url = f"http://127.0.0.1:{args.port}/?token={serverlib.ACCESS_TOKEN}"
     if not args.no_browser:

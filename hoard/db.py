@@ -7,6 +7,20 @@ import sqlite3
 from pathlib import Path
 
 DB_PATH = Path.home() / ".local" / "share" / "hoard" / "index.db"
+LAST_DIR_FILE = Path.home() / ".local" / "share" / "hoard" / "last_dir.txt"
+
+
+def get_last_scanned_dir() -> str | None:
+    if LAST_DIR_FILE.exists():
+        text = LAST_DIR_FILE.read_text().strip()
+        return text or None
+    return None
+
+
+def set_last_scanned_dir(path: str) -> None:
+    LAST_DIR_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAST_DIR_FILE.parent.chmod(0o700)
+    LAST_DIR_FILE.write_text(path)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
