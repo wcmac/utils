@@ -21,6 +21,10 @@ def parse_parameters(text: str) -> dict:
     {positive_prompt, negative_prompt, params: {key: value}, raw}
     Best-effort: returns whatever it can find, missing pieces are None/empty.
     """
+    # Normalize line endings first — some tools write \r\n or bare \r
+    # (old Mac-style) instead of \n, which would otherwise leave the whole
+    # blob as a single unsplit "line" and silently break parsing below.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.strip("\n")
     lines = text.split("\n")
 
