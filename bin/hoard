@@ -85,6 +85,32 @@ def cmd_scan(args):
         f"Indexed {stats['indexed']}, skipped {stats['skipped']} unchanged, "
         f"{stats['failed']} failed, {stats['removed']} removed."
     )
+    if stats["empty_prompt"]:
+        print(
+            f"Note: {stats['empty_prompt']} of the indexed images had no extractable "
+            f"prompt (no A1111 'parameters' text found — could be ComfyUI-generated, "
+            f"a plain photo, or an unrecognized metadata format). Run "
+            f"`hoard inspect <file>` on one of them to see what hoard actually found."
+        )
+
+
+def cmd_inspect(args):
+    path = Path(args.file).expanduser().resolve()
+    if not path.exists():
+        sys.exit(f"hoard: no such file: {path}")
+    raw = scanlib.extract_parameters_text(path)
+    print(f"File: {path}")
+    if raw is None:
+        print("No 'parameters' text (PNG) / UserComment (JPEG) found in this file's metadata.")
+        return
+    print("--- raw metadata text ---")
+    print(raw)
+    print("--- parsed ---")
+    from hoard.parse import parse_parameters
+    parsed = parse_parameters(raw)
+    print(f"positive_prompt: {parsed['positive_prompt']!r}")
+    print(f"negative_prompt: {parsed['negative_prompt']!r}")
+    print(f"params: {parsed['params']}")
 
 
 def cmd_serve(args):
@@ -115,6 +141,10 @@ def main():
     p_serve.add_argument("--port", type=int, default=8420)
     p_serve.add_argument("--no-browser", action="store_true", help="don't auto-open a browser tab")
     p_serve.set_defaults(func=cmd_serve)
+
+    p_inspect = sub.add_parser("inspect", help="show what hoard extracted from one specific file")
+    p_inspect.add_argument("file", help="path to a single image file")
+    p_inspect.set_defaults(func=cmd_inspect)
 
     args = parser.parse_args()
     args.func(args)

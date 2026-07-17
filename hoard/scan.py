@@ -48,6 +48,7 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
     indexed = 0
     skipped = 0
     failed = 0
+    empty_prompt = 0
     seen_paths = set()
 
     for path in find_images(root_path):
@@ -93,6 +94,8 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
             }
             db.upsert_image(conn, record)
             indexed += 1
+            if not record["positive_prompt"] and not record["negative_prompt"]:
+                empty_prompt += 1
         except Exception:
             failed += 1
 
@@ -102,7 +105,13 @@ def scan_directory(root: str, rescan: bool = False) -> dict:
 
     db.set_last_scanned_dir(str(root_path))
 
-    return {"indexed": indexed, "skipped": skipped, "failed": failed, "removed": removed}
+    return {
+        "indexed": indexed,
+        "skipped": skipped,
+        "failed": failed,
+        "removed": removed,
+        "empty_prompt": empty_prompt,
+    }
 
 
 def _to_float(value):
