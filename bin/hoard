@@ -7,7 +7,6 @@ dependencies (see hoard/requirements.txt) — no manual pip install needed.
 """
 
 import hashlib
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +40,13 @@ def _run(cmd: list[str]) -> None:
         )
 
 
+def _venv_site_packages() -> Path:
+    # Standard POSIX venv layout. Safe to compute statically (rather than
+    # asking the venv itself) because the venv is always created from this
+    # exact running interpreter, so the version tag matches by construction.
+    return VENV_DIR / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+
+
 def _ensure_venv() -> None:
     if _venv_is_current():
         return
@@ -53,18 +59,19 @@ def _ensure_venv() -> None:
     REQUIREMENTS_HASH_FILE.write_text(_requirements_hash())
 
 
-def _relaunch_in_venv_if_needed() -> None:
-    _ensure_venv()
-    if Path(sys.executable).resolve() != VENV_PYTHON.resolve():
-        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(Path(__file__).resolve())] + sys.argv[1:])
-
-
-_relaunch_in_venv_if_needed()
+# Rather than re-exec'ing into the venv's own python3 (which relies on that
+# interpreter correctly self-detecting it's running inside a venv — this can
+# silently fail depending on how python3 is installed/shimmed on a given
+# account), just add the venv's site-packages onto the current process's
+# sys.path. Safe because the venv was built from this exact interpreter.
+_ensure_venv()
 
 import argparse
+import site
 import webbrowser
 from threading import Timer
 
+site.addsitedir(str(_venv_site_packages()))
 sys.path.insert(0, str(REPO_ROOT))
 
 from hoard import scan as scanlib
