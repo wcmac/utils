@@ -61,8 +61,8 @@ header h1 {
 }
 #grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 6px;
   padding: 12px;
 }
 #load-more {
