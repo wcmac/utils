@@ -95,33 +95,41 @@ header h1 {
   object-fit: cover;
   display: block;
 }
+#resizer {
+  width: 6px;
+  flex-shrink: 0;
+  height: 100%;
+  cursor: col-resize;
+  background: #2a2d35;
+}
+#resizer:hover,
+#resizer:active {
+  background: #8fb3ff;
+}
+#resizer.hidden {
+  display: none;
+}
 #detail-pane {
-  width: 380px;
   flex-shrink: 0;
   height: 100%;
   overflow-y: auto;
-  border-left: 1px solid #2a2d35;
   background: #1c1e24;
   padding: 1rem;
   font-size: 0.85rem;
 }
-#detail-empty {
-  color: #666;
-  text-align: center;
-  margin-top: 2rem;
-}
-#detail-content.hidden,
-#detail-empty.hidden {
+#detail-pane.hidden {
   display: none;
 }
 #detail-img {
+  display: block;
   width: 100%;
+  max-height: 65vh;
+  object-fit: contain;
   border-radius: 6px;
   background: #000;
   margin-bottom: 1rem;
-  display: block;
 }
-#detail-content pre {
+#detail-pane pre {
   white-space: pre-wrap;
   word-break: break-word;
   background: #0f1013;

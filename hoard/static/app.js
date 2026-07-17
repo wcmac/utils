@@ -2,15 +2,18 @@ const grid = document.getElementById("grid");
 const searchInput = document.getElementById("search");
 const countEl = document.getElementById("count-bar");
 const loadMoreBtn = document.getElementById("load-more");
-const detailEmpty = document.getElementById("detail-empty");
-const detailContent = document.getElementById("detail-content");
+const layout = document.getElementById("layout");
+const resizer = document.getElementById("resizer");
+const detailPane = document.getElementById("detail-pane");
 const detailImg = document.getElementById("detail-img");
 
 const PAGE_SIZE = 60;
+const MIN_PANE_WIDTH = 240;
 let debounceTimer = null;
 let loadedCount = 0;
 let totalCount = 0;
 let selectedCell = null;
+let paneVisible = false;
 
 function runSearch() {
   loadedCount = 0;
@@ -51,10 +54,19 @@ function appendGrid(items) {
   }
 }
 
+function showPane() {
+  if (paneVisible) return;
+  paneVisible = true;
+  detailPane.classList.remove("hidden");
+  resizer.classList.remove("hidden");
+  detailPane.style.width = `${layout.getBoundingClientRect().width * 0.5}px`;
+}
+
 function selectImage(id, cell) {
   if (selectedCell) selectedCell.classList.remove("selected");
   selectedCell = cell;
   cell.classList.add("selected");
+  showPane();
 
   fetch(`/api/image/${id}`)
     .then((r) => r.json())
@@ -71,10 +83,27 @@ function selectImage(id, cell) {
       if (detail.width && detail.height) params.push(`Size: ${detail.width}x${detail.height}`);
       document.getElementById("meta-params").textContent = params.join("\n") || "(none)";
       document.getElementById("meta-path").textContent = detail.path;
-      detailEmpty.classList.add("hidden");
-      detailContent.classList.remove("hidden");
     });
 }
+
+function onResizerDrag(e) {
+  const layoutRect = layout.getBoundingClientRect();
+  const maxWidth = layoutRect.width - MIN_PANE_WIDTH;
+  let newWidth = layoutRect.right - e.clientX;
+  newWidth = Math.max(MIN_PANE_WIDTH, Math.min(maxWidth, newWidth));
+  detailPane.style.width = `${newWidth}px`;
+}
+
+function stopResizerDrag() {
+  document.removeEventListener("mousemove", onResizerDrag);
+  document.removeEventListener("mouseup", stopResizerDrag);
+}
+
+resizer.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  document.addEventListener("mousemove", onResizerDrag);
+  document.addEventListener("mouseup", stopResizerDrag);
+});
 
 searchInput.addEventListener("input", () => {
   clearTimeout(debounceTimer);

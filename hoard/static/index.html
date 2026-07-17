@@ -16,15 +16,13 @@
     <main id="grid"></main>
     <button id="load-more" class="hidden">Load more</button>
   </div>
-  <aside id="detail-pane">
-    <div id="detail-empty">Select an image to see details</div>
-    <div id="detail-content" class="hidden">
-      <img id="detail-img" alt="">
-      <div><strong>Prompt</strong><pre id="meta-positive"></pre></div>
-      <div><strong>Negative prompt</strong><pre id="meta-negative"></pre></div>
-      <div><strong>Params</strong><pre id="meta-params"></pre></div>
-      <div id="meta-path"></div>
-    </div>
+  <div id="resizer" class="hidden"></div>
+  <aside id="detail-pane" class="hidden">
+    <img id="detail-img" alt="">
+    <div><strong>Prompt</strong><pre id="meta-positive"></pre></div>
+    <div><strong>Negative prompt</strong><pre id="meta-negative"></pre></div>
+    <div><strong>Params</strong><pre id="meta-params"></pre></div>
+    <div id="meta-path"></div>
   </aside>
 </div>
 <script src="/app.js"></script>
