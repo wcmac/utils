@@ -129,6 +129,19 @@ header h1 {
   background: #000;
   margin-bottom: 1rem;
 }
+#open-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #3a3d47;
+  background: #24262d;
+  color: #e6e6e6;
+  cursor: pointer;
+}
+#open-btn:hover { background: #2c2f38; }
 #detail-pane pre {
   white-space: pre-wrap;
   word-break: break-word;

@@ -6,6 +6,7 @@ const layout = document.getElementById("layout");
 const resizer = document.getElementById("resizer");
 const detailPane = document.getElementById("detail-pane");
 const detailImg = document.getElementById("detail-img");
+const openBtn = document.getElementById("open-btn");
 
 const PAGE_SIZE = 60;
 const MIN_PANE_WIDTH = 240;
@@ -13,6 +14,7 @@ let debounceTimer = null;
 let loadedCount = 0;
 let totalCount = 0;
 let selectedCell = null;
+let selectedId = null;
 let paneVisible = false;
 
 function runSearch() {
@@ -65,6 +67,7 @@ function showPane() {
 function selectImage(id, cell) {
   if (selectedCell) selectedCell.classList.remove("selected");
   selectedCell = cell;
+  selectedId = id;
   cell.classList.add("selected");
   showPane();
 
@@ -103,6 +106,10 @@ resizer.addEventListener("mousedown", (e) => {
   e.preventDefault();
   document.addEventListener("mousemove", onResizerDrag);
   document.addEventListener("mouseup", stopResizerDrag);
+});
+
+openBtn.addEventListener("click", () => {
+  if (selectedId != null) fetch(`/api/open/${selectedId}`, { method: "POST" });
 });
 
 searchInput.addEventListener("input", () => {

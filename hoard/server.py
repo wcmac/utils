@@ -10,6 +10,7 @@ rest of the browser session.
 """
 
 import secrets
+import subprocess
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, abort, session
@@ -123,6 +124,22 @@ def full(image_id):
     if not path.exists():
         abort(404)
     return send_file(path)
+
+
+@app.post("/api/open/<int:image_id>")
+def api_open(image_id):
+    conn = db.connect()
+    row = db.get_image(conn, image_id)
+    conn.close()
+    if row is None:
+        abort(404)
+    path = Path(row["path"])
+    if not path.exists():
+        abort(404)
+    # `open` is macOS's own "double-click in Finder" launcher — respects
+    # whatever app is set as the default for this file type.
+    subprocess.run(["open", str(path)], check=True)
+    return jsonify({"ok": True})
 
 
 def run(port: int = 8420):
