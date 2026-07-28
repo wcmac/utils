@@ -80,7 +80,11 @@
       e.stopPropagation();
       e.preventDefault();
       const img = currentImg;
-      if (!img) return;
+      if (!img || !document.body.contains(img)) {
+        currentImg = null;
+        div.style.display = 'none';
+        return;
+      }
 
       if (!runtimeAlive()) {
         showToast(img, '✗ Extension was reloaded — please refresh this page');
@@ -260,6 +264,24 @@
   document.addEventListener('mouseout', (e) => {
     if (e.target === currentImg) scheduleHide();
   });
+
+  // Some pages swap out the hovered <img> element via JS (e.g. a lightbox's
+  // next/prev button) without the mouse actually moving, so no mouseover
+  // fires for the replacement. Detect that the tracked image left the DOM
+  // and drop it, so a stale/detached node is never used for a click or
+  // badge (getBoundingClientRect() on a detached node is all zeros, which
+  // otherwise pins the toast/badge at the top-left corner).
+  const domObserver = new MutationObserver(() => {
+    if (currentImg && !document.body.contains(currentImg)) {
+      clearTimeout(hideTimer);
+      if (overlay) overlay.style.display = 'none';
+      currentImg = null;
+    }
+    for (const img of badges.keys()) {
+      if (!document.body.contains(img)) removeBadge(img);
+    }
+  });
+  domObserver.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener('scroll', () => {
     if (currentImg && overlay?.style.display !== 'none') {
