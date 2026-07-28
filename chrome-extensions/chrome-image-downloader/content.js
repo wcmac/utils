@@ -23,6 +23,8 @@
   let hideTimer  = null;
   let cachedTargetDir = null;
   let dupeState  = null; // { src, expires } — armed after first click on a dupe
+  const imgState = new WeakMap(); // img -> current button symbol ('…', '✓', '✗')
+  const badges   = new Map();     // img -> lingering badge element (shown while not hovered)
 
   // Returns false if the extension was reloaded and this content script is orphaned.
   function runtimeAlive() {
@@ -95,10 +97,10 @@
       const allowDupe = !!(dupeState && dupeState.src === src && Date.now() < dupeState.expires);
       if (allowDupe) dupeState = null;
 
-      showState(btn, '…', null);
+      setImgState(btn, img, '…', false);
       const resetTimer = setTimeout(() => {
         showToast(img, '✗ Timed out — see last error in the extension popup');
-        showState(btn, '✗', false);
+        setImgState(btn, img, '✗', true);
       }, 70000);
 
       sendMsg({ action: 'download_image', src, allowDupe }, (response) => {
@@ -109,15 +111,15 @@
           // First encounter with a dupe — arm the second-click window
           dupeState = { src, expires: Date.now() + 5000 };
           showToast(img, '⚠ Already exists — click ⬇ again to choose a location');
-          btn.textContent = '⬇';
+          clearImgState(btn, img);
         } else if (lastErr || !response?.success) {
           const err = response?.error || lastErr?.message || 'Download failed';
           showToast(img, `✗ ${err}`);
-          showState(btn, '✗', false);
+          setImgState(btn, img, '✗', true);
         } else {
           const savedTo = response.destPath;
           showToast(img, savedTo ? `✓ Saved to ${truncatePath(savedTo)}` : '✓ Saved');
-          showState(btn, '✓', true);
+          setImgState(btn, img, '✓', true);
         }
         img.focus({ preventScroll: true });
       });
@@ -126,10 +128,57 @@
     return div;
   }
 
-  function showState(btn, symbol, success) {
-    btn.textContent = symbol;
-    if (success === null) return;
-    setTimeout(() => { btn.textContent = '⬇'; }, 1800);
+  // Per-image button state, so a delayed result for one image never paints
+  // onto the shared button while the user is hovering a different image.
+  function setImgState(btn, img, symbol, autoReset) {
+    imgState.set(img, symbol);
+    if (currentImg === img) btn.textContent = symbol;
+    else syncBadge(img);
+    if (autoReset) {
+      setTimeout(() => {
+        if (imgState.get(img) === symbol) imgState.delete(img);
+        if (currentImg === img) btn.textContent = '⬇';
+        else syncBadge(img);
+      }, 1800);
+    }
+  }
+
+  function clearImgState(btn, img) {
+    imgState.delete(img);
+    if (currentImg === img) btn.textContent = '⬇';
+    else syncBadge(img);
+  }
+
+  // A badge is the same indicator as the hover button, but pinned over an
+  // image that isn't currently hovered — so progress/result stay visible
+  // even after the mouse moves away.
+  function positionBadge(img, div) {
+    const rect = img.getBoundingClientRect();
+    div.style.left = `${rect.right  + window.scrollX - 44}px`;
+    div.style.top  = `${rect.bottom + window.scrollY - 44}px`;
+  }
+
+  function removeBadge(img) {
+    const div = badges.get(img);
+    if (div) { div.remove(); badges.delete(img); }
+  }
+
+  function syncBadge(img) {
+    const state = imgState.get(img);
+    // No active state, or the hover button already shows it — no badge needed.
+    if (!state || currentImg === img) {
+      removeBadge(img);
+      return;
+    }
+    let div = badges.get(img);
+    if (!div) {
+      div = document.createElement('div');
+      div.className = 'img-dl-btn img-dl-badge';
+      document.body.appendChild(div);
+      badges.set(img, div);
+    }
+    div.textContent = state;
+    positionBadge(img, div);
   }
 
   let toast      = null;
@@ -172,14 +221,18 @@
     const ov = getOverlay();
     ov.style.left = `${rect.right  + window.scrollX - 44}px`;
     ov.style.top  = `${rect.bottom + window.scrollY - 44}px`;
-    ov.querySelector('.img-dl-btn').title = btnTitle();
+    const btn = ov.querySelector('.img-dl-btn');
+    btn.title = btnTitle();
+    btn.textContent = imgState.get(img) || '⬇';
     ov.style.display = 'block';
   }
 
   function scheduleHide() {
     hideTimer = setTimeout(() => {
       if (overlay) overlay.style.display = 'none';
+      const prev = currentImg;
       currentImg = null;
+      if (prev) syncBadge(prev);
     }, 220);
   }
 
@@ -197,8 +250,11 @@
     }
     if (!img || !isLargeEnough(img)) return;
     clearTimeout(hideTimer);
+    const prev = currentImg;
     currentImg = img;
     positionOverlay(img);
+    syncBadge(img); // hover button now covers this image's state
+    if (prev && prev !== img) syncBadge(prev); // may need a badge now that it's unhovered
   });
 
   document.addEventListener('mouseout', (e) => {
@@ -209,5 +265,6 @@
     if (currentImg && overlay?.style.display !== 'none') {
       positionOverlay(currentImg);
     }
+    for (const [img, div] of badges) positionBadge(img, div);
   }, { passive: true });
 })();

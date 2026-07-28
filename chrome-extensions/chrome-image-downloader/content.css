@@ -30,6 +30,13 @@
   font-size: 14px;
 }
 
+.img-dl-badge {
+  position: absolute;
+  z-index: 2147483647;
+  pointer-events: none;
+  cursor: default;
+}
+
 #__img_dl_toast__ {
   position: absolute;
   z-index: 2147483647;
