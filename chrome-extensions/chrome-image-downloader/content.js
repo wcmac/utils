@@ -60,9 +60,10 @@
   }
 
   function btnTitle() {
-    return cachedTargetDir
+    const base = cachedTargetDir
       ? `Download to ${truncatePath(cachedTargetDir)}`
       : 'Download image (no folder set — click extension icon to choose)';
+    return `${base} (or press d)`;
   }
 
   function createOverlay() {
@@ -85,51 +86,59 @@
         div.style.display = 'none';
         return;
       }
-
-      if (!runtimeAlive()) {
-        showToast(img, '✗ Extension was reloaded — please refresh this page');
-        return;
-      }
-
-      const src = img.currentSrc || img.src;
-      if (!src || src.startsWith('data:')) {
-        showToast(img, '✗ No downloadable URL found');
-        return;
-      }
-
-      // Second click within the dupe window → open the file picker
-      const allowDupe = !!(dupeState && dupeState.src === src && Date.now() < dupeState.expires);
-      if (allowDupe) dupeState = null;
-
-      setImgState(btn, img, '…', false);
-      const resetTimer = setTimeout(() => {
-        showToast(img, '✗ Timed out — see last error in the extension popup');
-        setImgState(btn, img, '✗', true);
-      }, 70000);
-
-      sendMsg({ action: 'download_image', src, allowDupe }, (response) => {
-        clearTimeout(resetTimer);
-        const lastErr = runtimeAlive() ? chrome.runtime.lastError : null;
-
-        if (response?.dupe) {
-          // First encounter with a dupe — arm the second-click window
-          dupeState = { src, expires: Date.now() + 5000 };
-          showToast(img, '⚠ Already exists — click ⬇ again to choose a location');
-          clearImgState(btn, img);
-        } else if (lastErr || !response?.success) {
-          const err = response?.error || lastErr?.message || 'Download failed';
-          showToast(img, `✗ ${err}`);
-          setImgState(btn, img, '✗', true);
-        } else {
-          const savedTo = response.destPath;
-          showToast(img, savedTo ? `✓ Saved to ${truncatePath(savedTo)}` : '✓ Saved');
-          setImgState(btn, img, '✓', true);
-        }
-        img.focus({ preventScroll: true });
-      });
+      performDownload(img);
     });
 
     return div;
+  }
+
+  // Shared by the hover-button click and the 'd' keyboard shortcut. Not tied
+  // to hover state — setImgState/syncBadge already route the indicator to
+  // whichever of the shared button or a per-image badge applies.
+  function performDownload(img) {
+    if (!runtimeAlive()) {
+      showToast(img, '✗ Extension was reloaded — please refresh this page');
+      return;
+    }
+
+    const src = img.currentSrc || img.src;
+    if (!src || src.startsWith('data:')) {
+      showToast(img, '✗ No downloadable URL found');
+      return;
+    }
+
+    const btn = getOverlay().querySelector('.img-dl-btn');
+
+    // Second attempt within the dupe window → open the file picker
+    const allowDupe = !!(dupeState && dupeState.src === src && Date.now() < dupeState.expires);
+    if (allowDupe) dupeState = null;
+
+    setImgState(btn, img, '…', false);
+    const resetTimer = setTimeout(() => {
+      showToast(img, '✗ Timed out — see last error in the extension popup');
+      setImgState(btn, img, '✗', true);
+    }, 70000);
+
+    sendMsg({ action: 'download_image', src, allowDupe }, (response) => {
+      clearTimeout(resetTimer);
+      const lastErr = runtimeAlive() ? chrome.runtime.lastError : null;
+
+      if (response?.dupe) {
+        // First encounter with a dupe — arm the second-attempt window
+        dupeState = { src, expires: Date.now() + 5000 };
+        showToast(img, '⚠ Already exists — repeat to choose a location');
+        clearImgState(btn, img);
+      } else if (lastErr || !response?.success) {
+        const err = response?.error || lastErr?.message || 'Download failed';
+        showToast(img, `✗ ${err}`);
+        setImgState(btn, img, '✗', true);
+      } else {
+        const savedTo = response.destPath;
+        showToast(img, savedTo ? `✓ Saved to ${truncatePath(savedTo)}` : '✓ Saved');
+        setImgState(btn, img, '✓', true);
+      }
+      img.focus({ preventScroll: true });
+    });
   }
 
   // Per-image button state, so a delayed result for one image never paints
@@ -245,6 +254,38 @@
     const h = img.naturalHeight || img.getBoundingClientRect().height;
     return w * h >= MIN_AREA;
   }
+
+  function findBiggestImage() {
+    // Compare rendered on-screen size, not natural file resolution — pages
+    // like a lightbox often reuse the same full-res file for both a small
+    // grid thumbnail and the large foreground view, so natural size ties
+    // and can't tell them apart. Rendered size can't.
+    let best = null;
+    let bestArea = 0;
+    for (const img of document.images) {
+      const rect = img.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area > bestArea) {
+        bestArea = area;
+        best = img;
+      }
+    }
+    return bestArea >= MIN_AREA ? best : null;
+  }
+
+  // Single-key shortcut: 'd' downloads the biggest image on the page (e.g.
+  // the current image in a lightbox), no hover required.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'd' || e.repeat) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
+    const t = e.target;
+    if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.tagName === 'SELECT' || t?.isContentEditable) return;
+    if (!runtimeAlive()) return;
+    const img = findBiggestImage();
+    if (!img) return;
+    e.preventDefault();
+    performDownload(img);
+  });
 
   document.addEventListener('mouseover', (e) => {
     let img = e.target.closest('img');
