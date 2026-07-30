@@ -14,7 +14,7 @@ select-word-style bash
 
 # PATH ---------------------------------------------------------------------------------------------
 
-path=("/opt/homebrew/bin" "$HOME/utils/bin" "$HOME/.local/bin" $path)
+path=("/opt/homebrew/bin" "$HOME/hothouse/bin" "$HOME/utils/bin" "$HOME/.local/bin" $path)
 
 
 # ENVIRONMENT --------------------------------------------------------------------------------------
