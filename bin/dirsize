@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""dirsize — disk usage tree with automatic pruning.
+
+Shows the largest consumers in a directory hierarchy without expanding
+everything. Prunes by fraction of root size and max children per node.
+"""
+
+import os
+import sys
+import argparse
+
+
+def fmt_size(b):
+    for unit in ("B", "K", "M", "G", "T", "P"):
+        if b < 1024 or unit == "P":
+            return f"{b:5.0f}B" if unit == "B" else f"{b:5.1f}{unit}"
+        b /= 1024
+
+
+def scan(path):
+    """Walk path and return (total_bytes, {name: (size, children|None)}).
+
+    children is None for files/symlinks, a dict for directories.
+    Errors (permission denied, etc.) are silently skipped.
+    """
+    total = 0
+    children = {}
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return 0, {}
+
+    for entry in entries:
+        try:
+            if entry.is_symlink():
+                size = entry.stat(follow_symlinks=False).st_size
+                children[entry.name] = (size, None)
+                total += size
+            elif entry.is_file(follow_symlinks=False):
+                size = entry.stat().st_size
+                children[entry.name] = (size, None)
+                total += size
+            elif entry.is_dir(follow_symlinks=False):
+                sub_size, sub_children = scan(entry.path)
+                children[entry.name] = (sub_size, sub_children)
+                total += sub_size
+        except OSError:
+            pass
+
+    return total, children
+
+
+def print_tree(name, size, children, root_size, *, prefix="", is_last=True,
+               depth=0, max_depth, top_n, min_frac):
+    """Recursively print a pruned tree node."""
+    connector = "└── " if is_last else "├── "
+    size_str = fmt_size(size)
+
+    if depth == 0:
+        print(f"{size_str}  {name}")
+    else:
+        print(f"{prefix}{connector}{size_str}  {name}")
+
+    if children is None or depth >= max_depth:
+        return
+
+    child_prefix = prefix + ("    " if is_last else "│   ")
+
+    # All items sorted by size descending
+    items = sorted(children.items(), key=lambda kv: kv[1][0], reverse=True)
+
+    # Split into shown vs hidden based on top_n cap and min-size threshold
+    threshold = root_size * min_frac
+    shown = [item for item in items[:top_n] if item[1][0] >= threshold]
+    hidden = items[len(shown):]  # everything after the shown slice
+
+    for i, (cname, (csize, cchildren)) in enumerate(shown):
+        last = (i == len(shown) - 1) and not hidden
+        print_tree(
+            cname, csize, cchildren, root_size,
+            prefix=child_prefix, is_last=last,
+            depth=depth + 1, max_depth=max_depth, top_n=top_n, min_frac=min_frac,
+        )
+
+    if hidden:
+        hidden_size = sum(s for _, (s, _) in hidden)
+        n = len(hidden)
+        noun = "item" if n == 1 else "items"
+        print(f"{child_prefix}└── {fmt_size(hidden_size)}  … {n} {noun} not shown")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Show disk usage as a pruned tree.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Pruning heuristics (applied at each directory level):
+  - Show at most --top children, sorted by size descending.
+  - Hide any child below rank --top or smaller than --min-pct%% of root total.
+  - Don't recurse beyond --depth levels.
+  Hidden items are summarized as a single "… N items not shown" line.
+""",
+    )
+    ap.add_argument("path", nargs="?", default=".",
+                    help="directory to scan (default: .)")
+    ap.add_argument("-d", "--depth", type=int, default=4, metavar="N",
+                    help="max display depth (default: 4)")
+    ap.add_argument("-n", "--top", type=int, default=8, metavar="N",
+                    help="max children to show per directory (default: 8)")
+    ap.add_argument("-p", "--min-pct", type=float, default=1.0, metavar="PCT",
+                    help="hide items smaller than PCT%% of root (default: 1.0)")
+    args = ap.parse_args()
+
+    root = os.path.realpath(args.path)
+    if not os.path.isdir(root):
+        print(f"dirsize: {args.path!r} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Scanning {root} …", end="\r", flush=True, file=sys.stderr)
+    total, children = scan(root)
+    print(" " * 60, end="\r", file=sys.stderr)  # erase the scanning line
+
+    print_tree(
+        os.path.basename(root) or root,
+        total,
+        children,
+        root_size=total or 1,
+        max_depth=args.depth,
+        top_n=args.top,
+        min_frac=args.min_pct / 100.0,
+    )
+
+
+if __name__ == "__main__":
+    main()
