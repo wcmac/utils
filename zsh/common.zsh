@@ -11,6 +11,9 @@ setopt NO_AUTO_REMOVE_SLASH             # removing trailing slashes is a problem
 autoload -U select-word-style
 select-word-style bash
 
+# zmv: pattern-based bulk file renaming, e.g. zmv '(*).orig' '$1'
+autoload -Uz zmv
+
 
 # PATH ---------------------------------------------------------------------------------------------
 
