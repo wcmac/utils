@@ -7,6 +7,8 @@ extension the file actually has. If the file is unchanged since its most
 recent snapshot, it's skipped.
 """
 
+from __future__ import annotations
+
 import filecmp
 import shutil
 import sys
