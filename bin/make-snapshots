@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""make-snapshots — save dated copies of frequently-edited files.
+
+For each file in TARGETS (relative to the current directory), copies it
+into snapshots/ as "<stem>-<YYYYMMDD><suffix>", preserving whatever
+extension the file actually has. If the file is unchanged since its most
+recent snapshot, it's skipped.
+"""
+
+import filecmp
+import shutil
+import sys
+from datetime import date
+from pathlib import Path
+
+# Files to snapshot, relative to the current directory.
+TARGETS = [
+    "data.txt",
+    "notes.txt",
+    "todo.txt",
+    "lessons.txt",
+    "pearls.txt",
+]
+
+SNAPSHOT_DIR = Path("snapshots")
+
+
+def latest_snapshot(path: Path) -> Path | None:
+    """Return the most recently dated existing snapshot of `path`, or None."""
+    candidates = sorted(SNAPSHOT_DIR.glob(f"{path.stem}-*{path.suffix}"))
+    return candidates[-1] if candidates else None
+
+
+def make_snapshot(path: Path, ds: str) -> None:
+    if not path.exists():
+        print(f"skip {path}: not found", file=sys.stderr)
+        return
+
+    prev = latest_snapshot(path)
+    if prev is not None and filecmp.cmp(path, prev, shallow=False):
+        print(f"skip {path}: unchanged since {prev.name}")
+        return
+
+    dest = SNAPSHOT_DIR / f"{path.stem}-{ds}{path.suffix}"
+    SNAPSHOT_DIR.mkdir(exist_ok=True)
+    shutil.copy2(path, dest)
+    print(f"cp {path} {dest}")
+
+
+def main() -> None:
+    ds = date.today().strftime("%Y%m%d")
+    for name in TARGETS:
+        make_snapshot(Path(name), ds)
+
+
+if __name__ == "__main__":
+    main()
