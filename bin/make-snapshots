@@ -20,6 +20,7 @@ TARGETS = [
     "data.txt",
     "notes.txt",
     "todo.txt",
+    "todo.md",
     "lessons.txt",
     "pearls.txt",
 ]
