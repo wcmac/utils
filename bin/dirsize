@@ -12,9 +12,9 @@ import argparse
 
 def fmt_size(b):
     for unit in ("B", "K", "M", "G", "T", "P"):
-        if b < 1024 or unit == "P":
+        if b < 1000 or unit == "P":
             return f"{b:5.0f}B" if unit == "B" else f"{b:5.1f}{unit}"
-        b /= 1024
+        b /= 1000
 
 
 def scan(path):
