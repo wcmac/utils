@@ -61,7 +61,7 @@ nuke () { /bin/rm -r "$@" ; }
 
 # default flags
 alias du='du -h'
-alias df='df -h'
+alias df='df -H'
 alias grep='grep -E --color=auto'
 alias rsync='rsync -ahv --progress --exclude=".DS_Store" --exclude=".fseventsd" --exclude=".Spotlight-V100" --exclude=".TemporaryItems"'
 
