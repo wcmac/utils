@@ -4,4 +4,8 @@ __pycache__/
 *.pyo
 .env
 *.swp
-.claude/
+# local Claude Code harness state, not project content. Everything under
+# .claude/ is ignored unless explicitly excepted below.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
