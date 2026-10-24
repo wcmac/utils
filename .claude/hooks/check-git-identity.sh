@@ -23,7 +23,7 @@ import json, re, sys
 d = json.load(sys.stdin)
 cmd = (d.get("tool_input") or {}).get("command") or ""
 cwd = d.get("cwd") or ""
-kinds = set(re.findall(r"\bgit(?:\s+(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?))*\s+(commit|push|merge|pull|rebase|cherry-pick|revert|am)\b", cmd))
+kinds = set(re.findall(r"\bgit(?:\s+(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?))*\s+(commit|push|merge|pull|rebase|cherry-pick|revert|am)(?![\w-])", cmd))
 kind = "push" if "push" in kinds else ("commit" if kinds else "-")
 override = bool(
     re.search(r"--author\b|--reset-author|\bGIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL)=|\bgit\s+(?:\S+\s+)*-c\s+user\.", cmd)

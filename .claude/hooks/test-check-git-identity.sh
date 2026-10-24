@@ -72,6 +72,7 @@ for sub in "pull" "merge main" "rebase main" "cherry-pick abc" "revert abc" "am 
   check "git $sub, bad identity"                2 "$B" "$B" "git $sub"
   check "git $sub, good identity"               0 "$G" "$G" "git $sub"
 done
+check "merge-base is read-only, not a commit-creating verb" 0 "$B" "$B" "git merge-base HEAD main"
 check "push, good identity + origin + credential" 0 "$G" "$G" "git push origin main"
 check "push, bad identity"                      2 "$B" "$B" "git push origin main"
 check "push, wrong origin"                      2 "$BO" "$BO" "git push origin main"
