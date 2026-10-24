@@ -18,7 +18,7 @@ EXAMPLES
   # Pass extra rsync options (e.g. excludes):
   rsync-sidekick moves --apply --rsync-opt='--exclude=.DS_Store' ~/src /Volumes/Backup/src
 
-  # Find duplicate files under a directory:
+  # Find duplicate files under a directory (default: current directory):
   rsync-sidekick dupes /Volumes/Backup/Photos
 
   # Find duplicates, ignoring files under 1 MB:
@@ -428,7 +428,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_dupes.add_argument('directory', help='root directory to scan')
+    p_dupes.add_argument(
+        'directory', nargs='?', default='.',
+        help='root directory to scan (default: current directory)',
+    )
     p_dupes.add_argument(
         '--min-size',
         metavar='BYTES',
