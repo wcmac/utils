@@ -382,8 +382,8 @@ def run_check(rsync: str, coll: Collection, volume: str, source: str,
         if n or label != 'other':
             say(f'  {label:<18}{n}')
     say(f'  list: {out_path}')
-    say('Clean means 0 itemized lines. (The old backup-* functions printed '
-        'about 4\nheader lines with -v; this check prints none.)')
+    if lines:
+        say('Clean means 0 itemized lines.')
 
     result = report_rsync_exit(code, 'comparison')
     if result == 0:
@@ -476,8 +476,7 @@ them after the volume, and give values in the --opt=value form (e.g.
 --init only says what it would create.
 
 Copies use -a, which keeps times, permissions and symlinks but not extended
-attributes or ACLs (the old backup-* functions didn't either). Pass -X or -A
-to include them.
+attributes or ACLs. Pass -X or -A to include them.
 
 Collections marked streaming = yes (files download when read) refuse a
 checksum read of their own source: --check and rsync's -c need --from

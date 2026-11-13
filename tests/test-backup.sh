@@ -122,12 +122,14 @@ grep -qE "new files +1" <<<"$out" && grep -qE "changed files +1" <<<"$out" \
     && grep -qE "deleting +2" <<<"$out" && ok "  ...tally new=1 changed=1 deleting=2" \
     || { bad "  ...tally wrong"; echo "$out" | sed 's/^/    | /'; }
 grep -q "new.txt" <<<"$out" && bad "  ...check printed a filename" || ok "  ...no filenames printed"
+grep -q "Clean means 0 itemized lines" <<<"$out" && ok "  ...0-lines rule shown" || bad "  ...0-lines rule missing"
 perm=$(stat -f %Lp /tmp/backup-check-col-dstv.txt)
 [ "$perm" = 600 ] && ok "  ...list file is mode 600" || bad "  ...list file mode $perm"
 expect "real copy with -c"              0 "done"                    -- $B col dstv -c
 [ ! -e "$D/backup/col/.DS_Store" ] && ok "  ...junk removed (--delete-excluded)" || bad "  ...junk kept"
 expect "check clean again"              0 "CLEAN"                   -- $B col dstv --check
-expect "summary states the 0-lines rule" 0 "Clean means 0 itemized lines" -- $B col dstv --check
+expect "clean check omits the 0-lines rule" 0 "CLEAN" -- $B col dstv --check
+grep -q "Clean means" <<<"$out" && bad "  ...rule shown when clean" || ok "  ...rule not shown"
 chmod 600 "$D/backup/col/a.txt"
 expect "attribute-only difference"      0 "only attributes"         -- $B col dstv --check
 grep -q "not content" <<<"$out" && ok "  ...attribute note shown" || bad "  ...no attribute note"
