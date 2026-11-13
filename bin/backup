@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""backup – mirror a collection onto a backup volume with rsync.
+
+Copies a collection to /Volumes/<volume>/backup/<collection>/. Sources,
+allowed volumes and excludes come from a config file outside this repo
+(~/.config/backup/collections.ini by default), so the script itself holds
+no personal paths.
+
+CONFIG FORMAT (INI)
+
+  [settings]
+  rsync = /opt/homebrew/bin/rsync    # rsync 3.x; macOS's openrsync is refused
+  # Optional policy switches. Each can also be set in a collection's own
+  # section to override this one.
+  #   delete = yes                   # mirror deletions (--delete and
+  #                                  #   --delete-excluded); on unless set to no
+  #   deleted_dir = _deleted         # keep deleted/replaced files in
+  #                                  #   backup/<collection>/_deleted/<date>/;
+  #                                  #   off unless set
+  #   log_dir = ~/logs/backup        # write an rsync --log-file per run;
+  #                                  #   off unless set
+
+  [music]
+  source = ~/Music/
+  volumes = backup1 offsite
+  exclude =
+      Cache
+      *.tmp
+
+  [photos]
+  source = /Volumes/photos-home/
+  volumes = backup1 backup2 offsite
+  moves = yes                        # run rsync-sidekick moves before copying
+
+  [cloud]
+  source = ~/Library/CloudStorage/SomeDrive/
+  volumes = backup1 backup2
+  streaming = yes                   # files download on read: a checksum
+                                     #   check needs --from or --quick
+
+One pattern per line under `exclude`; spaces are kept. macOS system folders
+(SYS_EXCLUDES below) are always excluded and need not be listed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import datetime
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+__version__ = '1.0.0'
+
+CONFIG_PATH = Path(os.environ.get(
+    'BACKUP_CONFIG', '~/.config/backup/collections.ini')).expanduser()
+
+# Where volumes are mounted. Overridable only so the tests can use disk
+# images mounted elsewhere; the mount checks apply either way.
+VOLUMES_DIR = Path(os.environ.get('BACKUP_VOLUMES_DIR', '/Volumes'))
+
+SETTINGS = 'settings'
+DEFAULT_RSYNC = '/opt/homebrew/bin/rsync'
+
+# macOS system folders and files that should never be copied.
+SYS_EXCLUDES = [
+    '.Trashes',
+    '.TemporaryItems',
+    '.fseventsd',
+    '.Spotlight-V100',
+    '.DS_Store',
+    '.DocumentRevisions-V100*',
+]
+
+RUN_FLAGS = ['-ahv', '--progress']
+CHECK_FLAGS = ['-anci']          # dry run, itemized, by checksum, no -v
+QUICK_FLAGS = ['-ani']           # the same, by size and time only
+
+EXIT_FAILED = 1                  # a guard refused, or a step failed
+
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+def say(msg: str = '') -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def fail(msg: str, code: int = EXIT_FAILED) -> None:
+    say(f'backup: {msg}')
+    sys.exit(code)
+
+
+def show_cmd(cmd: list[str]) -> None:
+    def quote(s: str) -> str:
+        return s if re.fullmatch(r'[\w@%+=:,./~-]+', s) else repr(s)
+    say('+ ' + ' '.join(quote(c) for c in cmd))
+
+
+# ── Config ───────────────────────────────────────────────────────────────────
+
+class Collection:
+    def __init__(self, name: str, section: configparser.SectionProxy,
+                 settings: configparser.SectionProxy | None):
+        self.name = name
+        self._section = section
+        self._settings = settings
+
+        source = section.get('source', '').strip()
+        if not source:
+            fail(f'{CONFIG_PATH}: [{name}] has no source')
+        self.source = os.path.expanduser(source)
+        self.volumes = section.get('volumes', '').split()
+        if not self.volumes:
+            fail(f'{CONFIG_PATH}: [{name}] lists no volumes')
+        self.excludes = [line.strip() for line
+                         in section.get('exclude', '').splitlines()
+                         if line.strip()]
+        self.moves = self._bool(section, 'moves', False)
+        self.streaming = self._bool(section, 'streaming', False)
+
+    @staticmethod
+    def _bool(section: configparser.SectionProxy, key: str,
+              default: bool) -> bool:
+        try:
+            return section.getboolean(key, fallback=default)
+        except ValueError:
+            fail(f'{CONFIG_PATH}: [{section.name}] {key} must be yes or no')
+            raise  # unreachable
+
+    def setting(self, key: str, default: str = '') -> str:
+        """A policy setting: the collection's own value, else [settings]."""
+        if key in self._section:
+            return self._section[key].strip()
+        if self._settings is not None and key in self._settings:
+            return self._settings[key].strip()
+        return default
+
+    def setting_bool(self, key: str, default: bool) -> bool:
+        for section in (self._section, self._settings):
+            if section is not None and key in section:
+                return self._bool(section, key, default)
+        return default
+
+
+def load_config() -> configparser.ConfigParser:
+    if not CONFIG_PATH.is_file():
+        fail(f'config file not found: {CONFIG_PATH}')
+    config = configparser.ConfigParser(interpolation=None)
+    try:
+        config.read(CONFIG_PATH)
+    except configparser.Error as exc:
+        fail(f'cannot read {CONFIG_PATH}: {exc}')
+    return config
+
+
+def collection_names(config: configparser.ConfigParser) -> list[str]:
+    return sorted(s for s in config.sections() if s != SETTINGS)
+
+
+def config_summary() -> str:
+    """The collections list shown at the end of --help."""
+    if not CONFIG_PATH.is_file():
+        return f'collections: none (config file not found: {CONFIG_PATH})'
+    config = configparser.ConfigParser(interpolation=None)
+    try:
+        config.read(CONFIG_PATH)
+    except configparser.Error as exc:
+        return f'collections: config file unreadable: {exc}'
+    names = collection_names(config)
+    if not names:
+        return f'collections: none listed in {CONFIG_PATH}'
+    vols = {n: ' '.join(config[n].get('volumes', '').split()) for n in names}
+    width = max(len(n) for n in names) + 2
+    vwidth = max(len(v) for v in vols.values()) + 3
+    lines = [f'collections (from {CONFIG_PATH}):']
+    for n in names:
+        tags = []
+        for key in ('moves', 'streaming'):
+            try:
+                if config[n].getboolean(key, fallback=False):
+                    tags.append(key)
+            except ValueError:
+                pass
+        tag = f'({", ".join(tags)})' if tags else ''
+        lines.append(f'  {n:<{width}}{vols[n]:<{vwidth}}{tag}'.rstrip())
+    return '\n'.join(lines)
+
+
+# ── Guards ───────────────────────────────────────────────────────────────────
+
+def mounted_volume(path: str) -> str | None:
+    """If path is under VOLUMES_DIR, return the volume name it lives on."""
+    try:
+        rel = Path(os.path.abspath(path)).relative_to(VOLUMES_DIR)
+    except ValueError:
+        return None
+    return rel.parts[0] if rel.parts else None
+
+
+def require_mounted(volume: str) -> None:
+    if not os.path.ismount(VOLUMES_DIR / volume):
+        fail(f'volume {volume} is not mounted')
+
+
+def require_source(source: str) -> None:
+    if not os.path.isdir(source):
+        fail(f'source is not a readable folder: {source}')
+    try:
+        with os.scandir(source) as it:
+            empty = next(it, None) is None
+    except OSError as exc:
+        fail(f'cannot read source {source}: {exc.strerror}')
+        raise  # unreachable
+    if empty:
+        # A mirror from an empty source would delete the whole backup.
+        fail(f'source is empty, so the backup would be wiped: {source}')
+
+
+def require_separate(source: str, dest: Path) -> None:
+    s = Path(os.path.realpath(source))
+    d = Path(os.path.realpath(dest))
+    if s == d or s in d.parents or d in s.parents:
+        fail(f'source and destination overlap: {s} and {d}')
+
+
+def require_rsync(rsync: str) -> None:
+    try:
+        out = subprocess.run([rsync, '--version'], capture_output=True,
+                             text=True).stdout
+    except OSError as exc:
+        fail(f'cannot run {rsync}: {exc.strerror}')
+        raise  # unreachable
+    m = re.search(r'rsync\s+version\s+(\d+)\.(\d+)', out)
+    if not m or 'openrsync' in out:
+        first = out.splitlines()[0] if out else '(no output)'
+        fail(f'{rsync} is not rsync 3.x: {first}')
+    if int(m.group(1)) < 3:
+        fail(f'{rsync} is version {m.group(1)}.{m.group(2)}; need 3.x')
+
+
+def has_rsync_flag(extra: list[str], short: str, long: str) -> bool:
+    """True if the passed-through rsync options include -<short> or --<long>,
+    alone or bundled with other short flags (as in -rnci)."""
+    for arg in extra:
+        if arg == f'--{long}':
+            return True
+        if re.fullmatch(rf'-[A-Za-z]*{short}[A-Za-z]*', arg):
+            return True
+    return False
+
+
+def is_dry_run(extra: list[str]) -> bool:
+    return has_rsync_flag(extra, 'n', 'dry-run')
+
+
+def refuse_streaming_read(coll: Collection, what: str) -> None:
+    fail(f'{coll.name} is marked streaming = yes, and {what} reads every '
+         'source file in full. Its source is a File Provider folder, so that '
+         'would download the whole collection. Use --from with another copy '
+         '(e.g. --from /Volumes/<volume>/backup/' f'{coll.name}/), --quick '
+         'to compare by size and time only, or --allow-download to read the '
+         'source in full anyway.')
+
+
+def announce_download(coll: Collection, source: str) -> None:
+    """Say how much a full read of a streaming source may download.
+
+    Sizes come from file metadata, which reading does not download."""
+    say(f'Measuring {coll.name}…')
+    total = files = 0
+    for root, dirs, names in os.walk(source):
+        for n in names:
+            try:
+                total += os.lstat(os.path.join(root, n)).st_size
+                files += 1
+            except OSError:
+                pass
+    say(f'--allow-download: reading all of {coll.name} ({files:,} files, '
+        f'{total / 1e9:,.1f} GB). Files not already on this Mac will be '
+        'downloaded,\nwhich needs that much free disk space and may take '
+        'a long time.')
+
+
+# ── rsync arguments ──────────────────────────────────────────────────────────
+
+def exclude_args(coll: Collection) -> list[str]:
+    return [f'--exclude={p}' for p in SYS_EXCLUDES + coll.excludes]
+
+
+def policy_args(coll: Collection, check: bool) -> list[str]:
+    args: list[str] = []
+    if coll.setting_bool('delete', True):
+        args += ['--delete', '--delete-excluded']
+    deleted_dir = coll.setting('deleted_dir').strip('/')
+    if deleted_dir:
+        # Never compare, copy into or delete the kept-files folder.
+        args.append(f'--filter=P /{deleted_dir}/')
+        if not check:
+            today = datetime.date.today().isoformat()
+            args += ['--backup', f'--backup-dir={deleted_dir}/{today}']
+    log_dir = coll.setting('log_dir')
+    if log_dir and not check:
+        log_dir = os.path.expanduser(log_dir)
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')
+        args.append(f'--log-file={log_dir}/{coll.name}-{stamp}.log')
+    return args
+
+
+def report_rsync_exit(code: int, what: str) -> int:
+    """Explain rsync's exit code; return the code backup should exit with."""
+    if code == 0:
+        return 0
+    if code == 24:
+        say(f'WARNING: some source files vanished during the {what} '
+            '(rsync exit 24). Usually harmless for a live folder.')
+        return 0
+    if code == 23:
+        say(f'FAILED: rsync exit 23. Some files could not be read or '
+            f'written, so rsync made no deletions. The {what} is incomplete.')
+        return 23
+    say(f'FAILED: rsync exited with code {code}.')
+    return code
+
+
+# ── --check ──────────────────────────────────────────────────────────────────
+
+def tally(lines: list[str]) -> dict[str, int]:
+    counts = {'new files': 0, 'changed files': 0, 'folders and links': 0,
+              'deleting': 0, 'attribute-only': 0, 'other': 0}
+    for line in lines:
+        if line.startswith('*deleting'):
+            counts['deleting'] += 1
+            continue
+        code = line[:11]
+        if code[:1] == '>' and code[1:2] == 'f':
+            if code[2:] == '+' * 9:
+                counts['new files'] += 1
+            else:
+                counts['changed files'] += 1
+        elif code[:1] in ('c', 'h'):
+            counts['folders and links'] += 1
+        elif code[:1] == '.':
+            counts['attribute-only'] += 1
+        else:
+            counts['other'] += 1
+    return counts
+
+
+def run_check(rsync: str, coll: Collection, volume: str, source: str,
+              dest: Path, extra: list[str], quick: bool) -> int:
+    out_path = Path(f'/tmp/backup-check-{coll.name}-{volume}.txt')
+    cmd = [rsync, *(QUICK_FLAGS if quick else CHECK_FLAGS),
+           *policy_args(coll, check=True),
+           *exclude_args(coll), *extra, source, f'{dest}/']
+    show_cmd(cmd)
+    if quick:
+        say('Comparing by size and time only. Files whose contents changed '
+            'without a size or time change will not show up.')
+    else:
+        say('Comparing by checksum. This reads every file on both sides.')
+    kind = 'quick (size+time), not checksum' if quick else 'checksum'
+
+    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)           # the list holds filenames
+    started = time.monotonic()
+    with os.fdopen(fd, 'w') as out:
+        code = subprocess.run(cmd, stdout=out).returncode
+    elapsed = time.monotonic() - started
+
+    lines = [l for l in out_path.read_text(errors='replace').splitlines()
+             if l.strip()]
+    counts = tally(lines)
+    say()
+    say(f'check {coll.name} on {volume}, {kind}: rsync exit {code}, '
+        f'{len(lines)} itemized lines, {fmt_elapsed(elapsed)}')
+    for label, n in counts.items():
+        if n or label != 'other':
+            say(f'  {label:<18}{n}')
+    say(f'  list: {out_path}')
+    say('Clean means 0 itemized lines. (The old backup-* functions printed '
+        'about 4\nheader lines with -v; this check prints none.)')
+
+    result = report_rsync_exit(code, 'comparison')
+    if result == 0:
+        real = len(lines) - counts['attribute-only']
+        if not lines:
+            say(f'CLEAN ({kind}): the backup matches the source.')
+        elif not real:
+            say(f'Contents match ({kind}); only attributes differ.')
+        else:
+            say('DIFFERENCES: see the counts above.')
+        if counts['attribute-only']:
+            say('Attribute-only lines (times, permissions) are expected after '
+                'a live\nsource changes them; they are not content '
+                'differences, and the next\nreal run fixes them.')
+    return result
+
+
+def fmt_elapsed(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f'{h}h{m:02d}m{s:02d}s' if h else f'{m}m{s:02d}s'
+
+
+# ── Moves ────────────────────────────────────────────────────────────────────
+
+# rsync-sidekick's closing hints tell you to run rsync yourself; backup does.
+def _is_hint(line: str) -> bool:
+    return ('Pass --apply' in line or line.startswith('Then run:')
+            or line.startswith('  rsync -av '))
+
+
+def run_moves(rsync: str, coll: Collection, source: str, dest: Path,
+              apply: bool, dry_run: bool) -> None:
+    sidekick = Path(__file__).resolve().parent / 'rsync-sidekick'
+    if not sidekick.is_file():
+        fail(f'rsync-sidekick not found next to backup: {sidekick}')
+    base = [sys.executable, str(sidekick), 'moves',
+            *[f'--rsync-opt={a}' for a in exclude_args(coll)]]
+    # rsync-sidekick calls plain `rsync`; make sure it finds the same one.
+    env = dict(os.environ)
+    env['PATH'] = f'{os.path.dirname(rsync)}{os.pathsep}{env.get("PATH", "")}'
+
+    say('Looking for moved or renamed files…')
+    proc = subprocess.run([*base, source, str(dest)], env=env,
+                          stdout=subprocess.PIPE, text=True)
+    for line in proc.stdout.splitlines():
+        if not _is_hint(line):
+            print(line, flush=True)
+    if proc.returncode != 0:
+        fail(f'rsync-sidekick moves failed (exit {proc.returncode})')
+    if 'Detected ' not in proc.stdout:
+        return
+
+    if dry_run:
+        say('Dry run: moves not applied.')
+        return
+    if not apply:
+        if not sys.stdin.isatty():
+            say('Not applying moves: no terminal to ask '
+                '(pass --apply-moves to apply them).')
+            return
+        try:
+            answer = input('Apply these moves on the backup? [y/N] ')
+        except EOFError:
+            answer = ''
+            say()
+        if answer.strip().lower() not in ('y', 'yes'):
+            say('Moves not applied; rsync will copy those files again.')
+            return
+    proc = subprocess.run([*base, '--apply', source, str(dest)], env=env,
+                          stdout=subprocess.PIPE, text=True)
+    # This run lists the moves again; show only what it did.
+    for line in proc.stdout.splitlines():
+        if line.startswith('  moved '):
+            print(line, flush=True)
+        elif 'applied.' in line:
+            print(line.split('  Now run:')[0], flush=True)
+    if proc.returncode != 0:
+        fail('some moves failed; nothing was copied. Fix them, or rerun '
+             'with --no-moves.')
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+USAGE_NOTES = """\
+Any other options are passed to rsync, after the script's own flags. Put
+them after the volume, and give values in the --opt=value form (e.g.
+--exclude=foo): a separate value may be taken for an argument. With -n (or
+--dry-run), nothing is changed: moves are listed but not applied, and
+--init only says what it would create.
+
+Copies use -a, which keeps times, permissions and symlinks but not extended
+attributes or ACLs (the old backup-* functions didn't either). Pass -X or -A
+to include them.
+
+Collections marked streaming = yes (files download when read) refuse a
+checksum read of their own source: --check and rsync's -c need --from
+another copy, --quick, or --allow-download to read the source anyway.
+
+Before copying, backup checks that:
+  - the volume is listed for the collection
+  - the volume, and the source's volume if any, is mounted
+  - the source exists and is not empty
+  - backup/<collection>/ already exists on the volume (unless --init)
+
+Exit status: 0 on success. rsync's code 23 (some files could not be read,
+so no deletions were made) is reported as a failure; 24 (files vanished
+during the copy) as a warning.
+"""
+
+EXAMPLES = """\
+examples:
+  backup photos backup1
+  backup photos backup1 --check
+  backup cloud backup1 --check --quick
+  backup music offsite
+  caffeinate -i backup photos offsite
+  backup cloud backup2 --check --from /Volumes/backup1/backup/cloud/
+  backup music backup1 -n           # rsync dry run
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='backup',
+        usage='backup [-h] [--check [--quick | --allow-download]] [--init]\n'
+              '              [--from PATH] [--apply-moves] [--no-moves]\n'
+              '              [--version]\n'
+              '              collection volume [rsync options ...]',
+        description=(
+            'Copy a collection to /Volumes/<volume>/backup/<collection>/ '
+            'with rsync.\n\n'
+            'The copy is a mirror: files deleted from the source are deleted '
+            'from the\nbackup, and excluded files are removed from it. macOS '
+            'system folders\n(.Trashes, .Spotlight-V100, .DS_Store and '
+            'others) are always excluded.'),
+        epilog=f'{USAGE_NOTES}\n{config_summary()}\n\n{EXAMPLES}',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.add_argument('collection',
+                        help=f'a collection in {_short(CONFIG_PATH)}')
+    parser.add_argument('volume', help='a volume listed for that collection')
+    parser.add_argument(
+        '--check', action='store_true',
+        help='compare by checksum without changing anything; print counts '
+             'by kind of change, and write the list of differences to '
+             '/tmp/backup-check-COLLECTION-VOLUME.txt')
+    parser.add_argument(
+        '--quick', action='store_true',
+        help='with --check: compare by size and time only, without '
+             'checksums (reads no file contents; implies --check)')
+    parser.add_argument(
+        '--allow-download', action='store_true',
+        help='let --check (or rsync -c) read a streaming collection\'s '
+             'source in full, downloading whatever is not on this Mac')
+    parser.add_argument(
+        '--init', action='store_true',
+        help="create backup/<collection>/ on the volume if it's missing "
+             '(otherwise a missing folder is an error)')
+    parser.add_argument(
+        '--from', dest='from_path', metavar='PATH',
+        help="read from PATH instead of the collection's source, for this "
+             'run only (e.g. another copy of the collection)')
+    parser.add_argument(
+        '--apply-moves', action='store_true',
+        help='apply detected moves without asking (collections with '
+             'moves = yes)')
+    parser.add_argument('--no-moves', action='store_true',
+                        help='skip move detection for this run')
+    parser.add_argument('--version', action='version',
+                        version=f'%(prog)s {__version__}')
+    return parser
+
+
+def _short(path: Path) -> str:
+    home = str(Path.home())
+    s = str(path)
+    return '~' + s[len(home):] if s.startswith(home + os.sep) else s
+
+
+def main() -> None:
+    parser = build_parser()
+    args, extra = parser.parse_known_args()
+
+    config = load_config()
+    if args.collection not in collection_names(config):
+        fail(f'unknown collection {args.collection!r}. Known: '
+             + ', '.join(collection_names(config)))
+    settings = config[SETTINGS] if config.has_section(SETTINGS) else None
+    coll = Collection(args.collection, config[args.collection], settings)
+
+    volume = args.volume
+    if volume not in coll.volumes:
+        fail(f'{volume} is not a volume for {coll.name}. '
+             f'Allowed: {" ".join(coll.volumes)}')
+
+    rsync = os.path.expanduser(
+        settings.get('rsync', DEFAULT_RSYNC) if settings else DEFAULT_RSYNC)
+    require_rsync(rsync)
+
+    source = os.path.expanduser(args.from_path or coll.source)
+    source = source.rstrip('/') + '/'    # copy the folder's contents
+    dest = VOLUMES_DIR / volume / 'backup' / coll.name
+    dry_run = is_dry_run(extra)
+    if args.quick:
+        args.check = True
+
+    full_streaming_read = coll.streaming and not args.from_path and (
+        (args.check and not args.quick)
+        or has_rsync_flag(extra, 'c', 'checksum'))
+    if full_streaming_read and not args.allow_download:
+        refuse_streaming_read(
+            coll, 'a checksum check' if args.check else "rsync's -c")
+
+    require_mounted(volume)
+    src_volume = mounted_volume(source)
+    if src_volume:
+        require_mounted(src_volume)
+    require_source(source)
+
+    if not dest.is_dir():
+        if os.path.lexists(dest):
+            fail(f'{dest} exists but is not a folder')
+        if not args.init:
+            fail(f'{dest} does not exist. If this is a new backup copy, '
+                 'rerun with --init.')
+        if args.check or dry_run:
+            say(f'Would create {dest} (not created: this is a dry run).')
+            return
+        if coll.streaming and not args.from_path:
+            say(f'Note: {coll.name} is streaming, so filling a new copy from '
+                'its source downloads\nevery file. --from another copy avoids '
+                'that.')
+        dest.mkdir(parents=True)
+        say(f'Created {dest}')
+
+    vol_root = Path(os.path.realpath(VOLUMES_DIR / volume))
+    if vol_root not in Path(os.path.realpath(dest)).parents:
+        fail(f'{dest} leads off the volume {volume} (a symlink?)')
+    require_separate(source, dest)
+    if full_streaming_read:
+        announce_download(coll, source)
+
+    if args.check:
+        sys.exit(run_check(rsync, coll, volume, source, dest, extra,
+                           args.quick))
+
+    if coll.moves and not args.no_moves:
+        run_moves(rsync, coll, source, dest, args.apply_moves, dry_run)
+
+    cmd = [rsync, *RUN_FLAGS, *policy_args(coll, check=False),
+           *exclude_args(coll), *extra, source, f'{dest}/']
+    show_cmd(cmd)
+    started = time.monotonic()
+    code = subprocess.run(cmd).returncode
+    result = report_rsync_exit(code, 'dry run' if dry_run else 'copy')
+    say(f'backup {coll.name} to {volume}: '
+        f'{"done" if result == 0 else "FAILED"} '
+        f'(rsync exit {code}, {fmt_elapsed(time.monotonic() - started)})')
+    sys.exit(result)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        say('\nbackup: interrupted')
+        sys.exit(130)
