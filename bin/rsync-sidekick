@@ -228,6 +228,9 @@ def cmd_moves(args: argparse.Namespace) -> None:
 
     saved = sum(size for _, _, size in moves)
 
+    # bin/backup's run_moves() and _is_hint() match the "Detected ", hint,
+    # "  moved " and "applied." strings below; if you change them, update
+    # those too.
     print(
         f'\nDetected {len(moves)} move(s) — '
         f'~{fmt_size(saved)} of data transfer saved:\n'
