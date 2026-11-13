@@ -63,7 +63,7 @@ nuke () { /bin/rm -r "$@" ; }
 alias du='du -h'
 alias df='df -H'
 alias grep='grep -E --color=auto'
-alias rsync='rsync -ahv --progress --exclude=".DS_Store" --exclude=".fseventsd" --exclude=".Spotlight-V100" --exclude=".TemporaryItems"'
+alias rsync='rsync -ahv --progress'
 
 # other conveniences
 loc () { find . -name "*$1*" -print; }
