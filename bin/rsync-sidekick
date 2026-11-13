@@ -157,12 +157,13 @@ def find_moves(
     backup: Path,
     deleted_rels: list[str],
     new_rels: list[str],
-) -> list[tuple[str, str, int]]:
-    """Return [(old_rel, new_rel, size), …] for unambiguous move pairs.
+) -> tuple[list[tuple[str, str, int]], int]:
+    """Return ([(old_rel, new_rel, size), …], n_ambiguous).
 
     A move is unambiguous when exactly one file on each side shares a
     fingerprint.  Ambiguous cases (duplicates on either side) are skipped
-    and left for rsync to handle normally.
+    and left for rsync to handle normally; n_ambiguous counts the new
+    files skipped this way.
     """
     # Index deleted files by fingerprint (they live on the backup disk)
     backup_index: dict[tuple, list[str]] = defaultdict(list)
@@ -179,16 +180,19 @@ def find_moves(
             source_index[fp].append(rel)
 
     moves = []
+    n_ambiguous = 0
     for fp, b_rels in backup_index.items():
         s_rels = source_index.get(fp)
         if not s_rels:
             continue
         if len(b_rels) == 1 and len(s_rels) == 1:
             moves.append((b_rels[0], s_rels[0], fp[0]))   # (old, new, size)
-        # else: ambiguous – multiple files share this fingerprint; skip them
+        else:
+            # ambiguous – multiple files share this fingerprint; skip them
+            n_ambiguous += len(s_rels)
 
     moves.sort(key=lambda t: t[2], reverse=True)   # largest first
-    return moves
+    return moves, n_ambiguous
 
 
 def cmd_moves(args: argparse.Namespace) -> None:
@@ -216,14 +220,13 @@ def cmd_moves(args: argparse.Namespace) -> None:
         f'Fingerprinting {n_del + n_new} candidate file(s)…',
         file=sys.stderr,
     )
-    moves = find_moves(source, backup, deleted_rels, new_rels)
+    moves, n_ambiguous = find_moves(source, backup, deleted_rels, new_rels)
 
     if not moves:
         print('No unambiguous moves detected.')
         return
 
     saved = sum(size for _, _, size in moves)
-    n_ambiguous = (n_del + n_new) // 2 - len(moves)   # rough count
 
     print(
         f'\nDetected {len(moves)} move(s) — '
